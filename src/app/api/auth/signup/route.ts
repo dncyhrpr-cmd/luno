@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FirestoreDatabase } from '@/lib/firestore-db';
 import { validatePassword } from '@/lib/auth-utils';
-import { admin, getDb } from '@/lib/firestore-admin';
 
 const firestoreDB = new FirestoreDatabase();
 
@@ -26,19 +25,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: validationResult }, { status: 400 });
     }
 
-    // 2. Create user in Firebase Authentication
-    let authUser;
-    try {
-      authUser = await admin.auth().createUser({
-        email,
-        password,
-        displayName: name,
-      });
-    } catch (authError: any) {
-      if (authError.code === 'auth/email-already-exists') {
-        return NextResponse.json({ error: 'User with this email already exists' }, { status: 409 });
-      }
-      return NextResponse.json({ error: 'Failed to create authentication user.' }, { status: 500 });
+    // 2. Check if user already exists
+    const existingUsers = await firestoreDB.getUsers();
+    const existingUser = existingUsers.users.find(u => u.email === email);
+
+    if (existingUser) {
+      return NextResponse.json({ error: 'User with this email already exists' }, { status: 409 });
     }
 
     // 3. Generate unique username
@@ -47,33 +39,29 @@ export async function POST(request: NextRequest) {
 
     // 4. Create user profile in Firestore
     try {
-      const db = getDb();
-      const userRef = db.collection('users').doc(authUser.uid);
-      await userRef.set({
+      const userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+      await firestoreDB.createUser({
         username,
         email,
         role: 'trader',
         roles: ['trader'],
-        balance: 0.0,
+        balance: 1000.0, // Give new users some starting balance
         twoFactorEnabled: false,
         migrationStatus: 'migrated',
-        createdAt: new Date(),
-      });
-      const userSnapshot = await userRef.get();
-      const userData = userSnapshot.data();
-      const user = { id: userSnapshot.id, ...userData };
+      }, userId);
 
       return NextResponse.json(
         {
           message: 'User created successfully',
-          userId: user.id
+          userId: userId
         },
         { status: 201 }
       );
 
     } catch (firestoreError: any) {
-      await admin.auth().deleteUser(authUser.uid);
-      throw firestoreError;
+      console.error('Failed to create user in Firestore:', firestoreError);
+      return NextResponse.json({ error: 'Failed to create user profile.' }, { status: 500 });
     }
 
   } catch (error: any) {
