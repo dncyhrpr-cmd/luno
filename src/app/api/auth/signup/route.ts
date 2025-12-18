@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FirestoreDatabase } from '@/lib/firestore-db';
 import { validatePassword } from '@/lib/auth-utils';
-import { admin } from '@/lib/firestore-admin';
+import { admin, getDb } from '@/lib/firestore-admin';
 
 const firestoreDB = new FirestoreDatabase();
 
@@ -47,7 +47,8 @@ export async function POST(request: NextRequest) {
 
     // 4. Create user profile in Firestore
     try {
-      const userRef = admin.firestore().collection('users').doc(authUser.uid);
+      const db = getDb();
+      const userRef = db.collection('users').doc(authUser.uid);
       await userRef.set({
         username,
         email,

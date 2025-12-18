@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { admin } from '@/lib/firestore-admin';
+import { getDb } from '@/lib/firestore-admin';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
 
 export async function GET(request: NextRequest) {
@@ -11,7 +11,8 @@ export async function GET(request: NextRequest) {
     try {
         const payload = await verifyAccessToken(token);
         const userId = payload.userId;
-        const userRef = admin.firestore().collection('users').doc(userId);
+        const db = getDb();
+        const userRef = db.collection('users').doc(userId);
         const userDoc = await userRef.get();
 
         if (!userDoc.exists) {

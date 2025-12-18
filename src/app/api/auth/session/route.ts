@@ -1,35 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FirestoreDatabase } from '../../../../lib/firestore-db';
-import { generateAuthTokens } from '@/lib/auth-utils';
-import { admin } from '@/lib/firestore-admin';
+import { generateAuthTokens, verifyAccessToken, extractTokenFromRequest } from '@/lib/auth-utils';
 
 const firestoreDB = new FirestoreDatabase();
 
-async function verifyFirebaseToken(token: string) {
-  try {
-    const decodedToken = await admin.auth().verifyIdToken(token);
-    return decodedToken;
-  } catch (error: any) {
-    return null;
-  }
-}
-
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const token = extractTokenFromRequest(request);
+    if (!token) {
       return NextResponse.json({ error: 'Authorization header missing or invalid' }, { status: 401 });
     }
 
-    const idToken = authHeader.substring(7); // Remove 'Bearer '
-
-    const decodedToken = await verifyFirebaseToken(idToken);
-
-    if (!decodedToken) {
-      return NextResponse.json({ error: 'Invalid Firebase token' }, { status: 401 });
+    let decodedToken;
+    try {
+      decodedToken = await verifyAccessToken(token);
+    } catch (error: any) {
+      return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 
-    const uid = decodedToken.uid;
+    const uid = decodedToken.userId;
     const userDoc = await firestoreDB.findUserById(uid);
 
     if (!userDoc) {
