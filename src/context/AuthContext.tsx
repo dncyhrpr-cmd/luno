@@ -2,12 +2,6 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import {
-  signInWithEmailAndPassword,
-  onAuthStateChanged,
-  User as FirebaseUser
-} from 'firebase/auth';
-import { getAuth2 } from '@/lib/client-db';
 import { User } from '@/types/index';
 
 interface AuthContextType {
@@ -26,8 +20,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-
-  const firebaseAuth = getAuth2();
 
   const handleAuthResponse = async (response: Response): Promise<string | null> => {
     if (!response.ok) {
@@ -61,21 +53,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string): Promise<string | null> => {
     try {
-      const userCredential = await signInWithEmailAndPassword(firebaseAuth, email, password);
-      const idToken = await userCredential.user.getIdToken();
-
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: idToken }),
+        body: JSON.stringify({ email, password }),
       });
 
       return await handleAuthResponse(response);
     } catch (error: any) {
       console.error('Login Error:', error);
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-          return 'Invalid email or password.';
-      }
       return 'Login failed. An unexpected error occurred.';
     }
   };
@@ -101,56 +87,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    firebaseAuth.signOut();
     setUser(null);
     setAccessToken(null);
     localStorage.removeItem('accessToken');
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(firebaseAuth, async (firebaseUser: FirebaseUser | null) => {
-      if (firebaseUser) {
+    const checkStoredAuth = async () => {
+      const storedToken = localStorage.getItem('accessToken');
+      if (storedToken) {
         try {
-            const idToken = await firebaseUser.getIdToken(true);
-            const response = await fetch('/api/auth/session', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${idToken}`
-                }
-            });
-
-            if(response.ok) {
-                const data = await response.json();
-                const authUser: User = {
-                    id: data.user.id,
-                    email: data.user.email,
-                    username: data.user.username,
-                    role: data.user.role || 'trader',
-                    roles: data.user.roles || ['trader'],
-                    migrationStatus: data.user.migrationStatus || 'migrated',
-                    isAdmin: data.user.role === 'admin',
-                    accessToken: data.accessToken, 
-                };
-                setUser(authUser);
-                setAccessToken(data.accessToken);
-                localStorage.setItem('accessToken', data.accessToken);
-            } else {
-                logout();
+          const response = await fetch('/api/auth/session', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${storedToken}`
             }
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const authUser: User = {
+              id: data.user.id,
+              email: data.user.email,
+              username: data.user.username,
+              role: data.user.role || 'trader',
+              roles: data.user.roles || ['trader'],
+              migrationStatus: data.user.migrationStatus || 'migrated',
+              isAdmin: data.user.role === 'admin',
+              accessToken: data.accessToken,
+            };
+            setUser(authUser);
+            setAccessToken(data.accessToken);
+            localStorage.setItem('accessToken', data.accessToken);
+          } else {
+            localStorage.removeItem('accessToken');
+            setUser(null);
+            setAccessToken(null);
+          }
         } catch (error: any) {
-            console.error('Session refresh error:', error);
-            logout();
+          console.error('Session refresh error:', error);
+          localStorage.removeItem('accessToken');
+          setUser(null);
+          setAccessToken(null);
         }
-      } else {
-        setUser(null);
-        setAccessToken(null);
       }
       setIsLoading(false);
-    });
+    };
 
-    return () => unsubscribe();
-  }, [firebaseAuth]);
+    checkStoredAuth();
+  }, []);
 
 
   const value: AuthContextType = {
