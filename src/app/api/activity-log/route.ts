@@ -14,6 +14,7 @@ export async function GET(request: NextRequest) {
         const { searchParams } = new URL(request.url);
         const full = searchParams.get('full');
 
+        const db = getFirestoreDb();
         const activityRef = db.collection('users').doc(userId).collection('activity');
 
         let query = activityRef.orderBy('time', 'desc');
