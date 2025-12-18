@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'ID token is required' }, { status: 400 });
     }
 
-    const decodedToken = await verifyFirebaseToken(token);
+    // const decodedToken = await verifyFirebaseToken(token);
 
     if (!decodedToken) {
       return NextResponse.json({ error: 'Invalid Firebase token' }, { status: 401 });
