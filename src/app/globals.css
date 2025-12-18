@@ -1,0 +1,288 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        /* Default (Light Mode) Colors */
+        --background: #ffffff;
+        --foreground: #171717;
+        
+        /* Define a CSS variable for the primary font family */
+        --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+        /* Enable light color scheme for OS preference matching */
+        color-scheme: light;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            /* Dark Mode Overrides */
+            --background: #0a0a0a;
+            --foreground: #ededed;
+            
+            /* Enable dark color scheme for OS preference matching */
+            color-scheme: dark;
+        }
+    }
+
+    body {
+        /* Apply variables and font stack */
+        background-color: var(--background);
+        color: var(--foreground);
+        font-family: var(--font-sans);
+        
+        /* Smooth transition for theme switching */
+        transition: background-color 0.3s, color 0.3s;
+    }
+}
+
+/* Authentication Page Styles */
+@layer components {
+    /* Main login container */
+    .luno-login-container {
+        @apply min-h-screen flex flex-col items-center justify-center px-4 py-12 sm:px-6 lg:px-8;
+        @apply bg-gradient-to-br from-indigo-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-indigo-900;
+    }
+
+    /* Logo styling */
+    .luno-logo {
+        @apply text-5xl font-bold text-indigo-600 dark:text-indigo-400 mb-2;
+        @apply tracking-tight;
+        text-shadow: 0 2px 4px rgba(99, 102, 241, 0.1);
+    }
+
+    /* Page title */
+    .luno-login-container h2 {
+        @apply text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-8;
+        @apply text-center;
+    }
+
+    /* Redirect message styling */
+    .luno-redirect-message {
+        @apply text-center p-8 bg-white dark:bg-gray-800 rounded-2xl shadow-xl;
+        @apply max-w-md mx-auto;
+    }
+
+    .luno-redirect-message h2 {
+        @apply text-2xl font-bold text-green-600 dark:text-green-400 mb-4;
+    }
+
+    .luno-redirect-message p {
+        @apply text-gray-700 dark:text-gray-300 mb-2;
+    }
+
+    .luno-redirect-message .security-note {
+        @apply text-sm text-gray-600 dark:text-gray-400;
+    }
+
+    .luno-redirect-message button {
+        @apply bg-transparent border-none cursor-pointer;
+        @apply focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2;
+        @apply rounded px-1 py-0.5 transition-all duration-200;
+    }
+
+    /* Error message styling */
+    .form-error {
+        @apply flex items-center gap-2 p-4 mb-6 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-xl;
+        @apply text-red-800 dark:text-red-300;
+        @apply transition-all duration-300 ease-in-out;
+    }
+
+    .form-error .icon-alert {
+        @apply flex-shrink-0;
+    }
+
+    /* Form styling */
+    .login-form {
+        @apply w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8;
+        @apply transition-all duration-300;
+    }
+
+    .login-form.form-loading-animation {
+        @apply opacity-90;
+    }
+
+    /* Input groups */
+    .input-group {
+        @apply mb-6;
+    }
+
+    .input-group label {
+        @apply block text-sm font-medium text-gray-800 dark:text-gray-200 mb-2;
+        @apply transition-colors duration-200;
+        @apply flex items-center gap-1;
+    }
+
+    .input-group input {
+        @apply w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-xl;
+        @apply bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100;
+        @apply placeholder-gray-500 dark:placeholder-gray-400;
+        @apply focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500;
+        @apply transition-all duration-200 ease-in-out;
+        @apply text-base;
+    }
+
+    .input-group input:disabled {
+        @apply bg-gray-50 dark:bg-gray-800 cursor-not-allowed;
+        @apply opacity-60;
+    }
+
+    .input-group input:focus {
+        @apply transform scale-[1.02];
+        @apply shadow-lg;
+    }
+
+    /* Password input wrapper */
+    .password-input-wrapper {
+        @apply relative;
+    }
+
+    .password-toggle-button {
+        @apply absolute right-3 top-1/2 transform -translate-y-1/2;
+        @apply text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200;
+        @apply transition-colors duration-200;
+        @apply p-1;
+    }
+
+    .password-toggle-button:disabled {
+        @apply opacity-50 cursor-not-allowed;
+    }
+
+    /* Forgot password link */
+    .forgot-password-link {
+        @apply block text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300;
+        @apply mt-2 transition-colors duration-200;
+        @apply font-medium;
+    }
+
+    /* Login button */
+    .login-button {
+        @apply w-full py-3 px-4 rounded-xl font-semibold text-base;
+        @apply transition-all duration-300 ease-in-out;
+        @apply transform active:scale-95;
+        @apply focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500;
+        @apply relative overflow-hidden;
+        @apply shadow-md hover:shadow-lg;
+    }
+
+    .login-button.button-ready {
+        @apply bg-indigo-600 hover:bg-indigo-700 text-white;
+        @apply hover:from-indigo-600 hover:to-indigo-700;
+    }
+
+    .login-button.button-busy {
+        @apply bg-indigo-400 text-white cursor-not-allowed;
+        @apply opacity-80;
+    }
+
+    .login-button:disabled {
+        @apply cursor-not-allowed opacity-70;
+    }
+
+    /* Loading content */
+    .loading-content {
+        @apply flex items-center justify-center gap-2;
+    }
+
+    .loading-spinner {
+        @apply animate-spin;
+    }
+
+    /* Security note */
+    .security-note {
+        @apply text-xs text-gray-600 dark:text-gray-400 text-center mt-6;
+        @apply leading-relaxed;
+    }
+
+    /* Sign up prompt */
+    .signup-prompt {
+        @apply mt-8 text-center;
+    }
+
+    .signup-prompt p {
+        @apply text-gray-700 dark:text-gray-300;
+    }
+
+    .signup-prompt a {
+        @apply text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300;
+        @apply font-medium transition-colors duration-200;
+    }
+
+    /* Animations */
+    .fade-in-out {
+        animation: fadeInOut 0.3s ease-in-out;
+    }
+
+    /* Keyframes */
+    @keyframes fadeInOut {
+        0% {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        100% {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 640px) {
+        .luno-login-container {
+            @apply px-4 py-8;
+        }
+        
+        .login-form {
+            @apply p-6;
+        }
+        
+        .luno-logo {
+            @apply text-4xl;
+        }
+        
+        .luno-login-container h2 {
+            @apply text-xl;
+        }
+    }
+
+    /* Standard card / box used across the app for consistent layout */
+    .luno-card {
+        @apply bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full;
+        @apply border border-gray-100 dark:border-gray-700;
+    }
+
+    /* High contrast mode support */
+    @media (prefers-contrast: high) {
+        .login-form {
+            @apply border-2 border-gray-800 dark:border-white;
+        }
+        
+        .input-group input {
+            @apply border-2 border-gray-800 dark:border-white;
+        }
+        
+        .login-button.button-ready {
+            @apply border-2 border-indigo-800;
+        }
+    }
+
+    /* Reduced motion support */
+    @media (prefers-reduced-motion: reduce) {
+        .luno-login-container,
+        .login-form,
+        .input-group input,
+        .login-button,
+        .form-error {
+            transition: none;
+            animation: none;
+        }
+        
+        .input-group input:focus {
+            transform: none;
+        }
+        
+        .login-button:active {
+            transform: none;
+        }
+    }
+}

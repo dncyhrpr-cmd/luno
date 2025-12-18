@@ -1,0 +1,101 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =================================
+    // Helper Functions
+    // =================================
+
+    // Checks if the request is from our Admin SDK (backend server)
+    function isServiceAccount() {
+      return request.auth.token.email == "firebase-adminsdk-fbsvc@luno-0.iam.gserviceaccount.com";
+    }
+
+    // Checks if a user is signed in
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Checks if the signed-in user has the 'admin' role
+    // Accept both the legacy `role` string field and the newer `roles` array.
+    function isAdmin() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles is list && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['admin']))
+      );
+    }
+
+    // =================================
+    // Collection Rules
+    // =================================
+
+    match /users/{userId} {
+      allow read: if isServiceAccount() || isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      // Users can write to their own doc, but cannot change their role or balance.
+      allow write: if isServiceAccount() || (isAuthenticated() && request.auth.uid == userId && request.resource.data.role == resource.data.role && request.resource.data.balance == resource.data.balance);
+    }
+
+    match /orders/{orderId} {
+      allow read, update, delete: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isServiceAccount() || isAuthenticated();
+    }
+
+    match /assets/{assetId} {
+      allow read, write: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    match /requests/{requestId} {
+      allow read: if isServiceAccount() || (isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin()));
+      allow create: if isServiceAccount() || isAuthenticated();
+      allow update: if isServiceAccount() || isAdmin();
+      allow delete: if false;
+    }
+
+    match /transaction_history/{historyId} {
+      allow read: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isServiceAccount() || isAuthenticated();
+      allow update, delete: if false;
+    }
+
+    match /kyc_data/{kycId} {
+      allow read: if isServiceAccount() || (isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin()));
+      allow create: if isServiceAccount() || isAuthenticated();
+      allow update: if isServiceAccount() || isAdmin();
+      allow delete: if false;
+    }
+
+    match /audit_logs/{logId} {
+      allow read: if isServiceAccount() || isAdmin();
+      allow create: if isServiceAccount();
+      allow update, delete: if false;
+    }
+
+    match /two_factor_auth/{twoFactorId} {
+        allow read, write: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    match /alerts/{alertId} {
+        allow read, update: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+        allow create, delete: if false;
+    }
+
+    match /scheduled_orders/{orderId} {
+        allow read, create, update, delete: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    match /advanced_orders/{orderId} {
+        allow read, create, update, delete: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+    
+    match /portfolio_analytics/{analyticsId} {
+        allow read: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+        allow create, update, delete: if false;
+    }
+
+    // Final default rule to deny any other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

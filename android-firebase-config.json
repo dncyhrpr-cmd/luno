@@ -1,0 +1,21 @@
+{
+  "androidAppConfig": {
+    "packageName": "com.luno.luno",
+    "appNickname": "Luno Crypto Android",
+    "firebaseProjectId": "luno-0",
+    "firebaseConfig": {
+      "apiKey": "AIzaSyB6VZGyh3S4IkOv1Wz81F1jd7oa-OlC1i0",
+      "authDomain": "luno-0.firebaseapp.com",
+      "projectId": "luno-0",
+      "storageBucket": "luno-0.appspot.com",
+      "messagingSenderId": "368484485180",
+      "appId": "1:368484485180:android:luno0lunocrypto",
+      "databaseURL": "https://luno-0.firebaseio.com"
+    },
+    "registrationDetails": {
+      "platform": "Android",
+      "projectName": "luno",
+      "status": "pending_google_services_json_download"
+    }
+  }
+}
