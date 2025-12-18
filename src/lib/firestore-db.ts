@@ -1,4 +1,4 @@
-import { db, admin } from './firestore-admin';
+import { getDb, admin } from './firestore-admin';
 import { QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { structuredLog } from './correlation'; // Assuming structuredLog is available here
 
@@ -217,7 +217,9 @@ export interface PortfolioAnalytics {
 
 // Firestore Database Service
 export class FirestoreDatabase {
-  private readonly db = db;
+  private get db() {
+    return getDb();
+  }
   private readonly USERS_COLLECTION = 'users';
   private readonly ORDERS_COLLECTION = 'orders';
   private readonly ASSETS_COLLECTION = 'assets';

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { getFirestoreDb } from '@/lib/db';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
 
 export async function GET(request: NextRequest) {
