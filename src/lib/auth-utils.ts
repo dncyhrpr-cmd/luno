@@ -86,12 +86,17 @@ export async function generateAuthTokens(user: Pick<User, 'id' | 'roles' | 'migr
  * @returns The JWT payload.
  */
 async function verifyToken(token: string, secret: Uint8Array): Promise<AuthTokenPayload> {
-  const { payload } = await jose.jwtVerify(token, secret, {
-    issuer: ISSUER,
-    audience: AUDIENCE,
-    // Future rotation logic would check the KID against known secrets
-  });
-  return payload as AuthTokenPayload;
+  try {
+    const { payload } = await jose.jwtVerify(token, secret, {
+      issuer: ISSUER,
+      audience: AUDIENCE,
+      // Future rotation logic would check the KID against known secrets
+    });
+    return payload as AuthTokenPayload;
+  } catch (error: any) {
+    console.log('verifyToken failed:', error.message);
+    throw error;
+  }
 }
 
 /**

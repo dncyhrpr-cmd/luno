@@ -24,31 +24,8 @@ export async function GET(request: NextRequest) {
         const snapshot = await query.get();
 
         if (snapshot.empty) {
-            // Create some sample data for the user if no data is found
-            const batch = db.batch();
-            const sampleActivity = [
-                {
-                    action: 'User Login',
-                    time: new Date(),
-                    details: 'Logged in from IP: 192.168.1.1',
-                },
-                {
-                    action: 'Password Change',
-                    time: new Date(),
-                    details: 'Password was successfully updated',
-                },
-            ];
-
-            sampleActivity.forEach(activity => {
-                const docRef = activityRef.doc();
-                batch.set(docRef, activity);
-            });
-
-            await batch.commit();
-
-            const newSnapshot = await activityRef.orderBy('time', 'desc').get();
-            const activityLog = newSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            return NextResponse.json(activityLog);
+            // Return empty array if no data is found
+            return NextResponse.json([]);
         }
 
         const activityLog = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));

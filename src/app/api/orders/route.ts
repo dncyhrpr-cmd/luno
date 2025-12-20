@@ -74,7 +74,9 @@ export async function POST(request: NextRequest) {
       executedQuantity: 0,
     };
 
+    console.log('Creating order with data:', orderData);
     const order = await firestoreDB.createOrder(orderData);
+    console.log('Order created:', { id: order.id, status: order.status });
 
     // --- Immediate Market Order Execution ---
     if (orderType === 'MARKET') {
@@ -131,6 +133,14 @@ export async function POST(request: NextRequest) {
           await firestoreDB.deleteAsset(existingAsset.id);
         }
       }
+
+      // Update order status to FILLED
+      console.log('About to update order status', { orderId: order.id, status: 'FILLED', executedQuantity: quantityNum });
+      await firestoreDB.updateOrder(order.id, {
+        status: 'FILLED',
+        executedQuantity: quantityNum
+      });
+      console.log('Order status updated successfully');
 
       // --- Logging and Notifications ---
       await firestoreDB.createTransactionHistory({

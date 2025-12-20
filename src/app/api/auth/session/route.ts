@@ -7,14 +7,18 @@ const firestoreDB = new FirestoreDatabase();
 export async function POST(request: NextRequest) {
   try {
     const token = extractTokenFromRequest(request);
+    console.log('Session route: Extracted token:', token ? 'present' : 'null');
     if (!token) {
+      console.log('Session route: No token provided');
       return NextResponse.json({ error: 'Authorization header missing or invalid' }, { status: 401 });
     }
 
     let decodedToken;
     try {
       decodedToken = await verifyAccessToken(token);
+      console.log('Session route: Token verified successfully, userId:', decodedToken.userId);
     } catch (error: any) {
+      console.log('Session route: Token verification failed:', error.message);
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
     }
 

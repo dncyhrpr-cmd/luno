@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    // Atomically fetch user and assets
+    // Fetch from Firestore
     const [user, assets] = await Promise.all([
       firestoreDB.findUserById(userId),
       firestoreDB.getAssets(userId),
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Deposit or withdraw funds from user's balance
+// POST - Create transaction request for admin approval
 export async function POST(request: NextRequest) {
   try {
     const token = extractTokenFromRequest(request);
@@ -52,54 +52,38 @@ export async function POST(request: NextRequest) {
 
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
-    const { amount, type } = await request.json();
+    const { amount, type, bankName, holderName, accountNumber, ifscCode } = await request.json();
 
     // Input Validation
     if (!['deposit', 'withdraw'].includes(type) || typeof amount !== 'number' || amount <= 0) {
         return NextResponse.json({ error: 'Invalid type or amount. Amount must be positive.' }, { status: 400 });
     }
 
-    // User and Balance Check
-    const user = await firestoreDB.findUserById(userId);
-    if (!user) {
-      return NextResponse.json({ error: 'User not found.' }, { status: 404 });
+    // Create transaction request for admin approval
+    const requestData: any = {
+      userId,
+      type: type as 'deposit' | 'withdraw',
+      amount,
+    };
+
+    // Only include bank details if they are provided and not empty
+    if (type === 'withdraw') {
+      if (bankName && bankName.trim()) requestData.bankName = bankName.trim();
+      if (holderName && holderName.trim()) requestData.holderName = holderName.trim();
+      if (accountNumber && accountNumber.trim()) requestData.accountNumber = accountNumber.trim();
+      if (ifscCode && ifscCode.trim()) requestData.ifscCode = ifscCode.trim();
     }
 
-    let newBalance;
-    const balanceBefore = user.balance;
-
-    if (type === 'deposit') {
-      newBalance = balanceBefore + amount;
-    } else { // withdraw
-      if (balanceBefore < amount) {
-        return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
-      }
-      newBalance = balanceBefore - amount;
-    }
-
-    // Database Operations
-    await firestoreDB.updateUserBalance(userId, newBalance);
-
-    // Create a transaction history record
-    await firestoreDB.createTransactionHistory({
-        userId,
-        type: type as 'deposit' | 'withdraw',
-        amount,
-        description: `${type.charAt(0).toUpperCase() + type.slice(1)} of $${amount.toFixed(2)}`,
-        status: 'completed',
-        balanceBefore,
-        balanceAfter: newBalance,
-    });
+    const transactionRequest = await firestoreDB.createTransactionRequest(requestData);
 
     return NextResponse.json({
-      message: `${type.charAt(0).toUpperCase() + type.slice(1)} successful`,
-      newBalance,
+      message: `${type.charAt(0).toUpperCase() + type.slice(1)} request submitted for approval`,
+      requestId: transactionRequest.id,
     });
-
   } catch (error: any) {
-     if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
+    if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Portfolio transaction failed' }, { status: 500 });
+    return NextResponse.json({ error: 'Request submission failed' }, { status: 500 });
   }
 }

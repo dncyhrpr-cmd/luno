@@ -2,10 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { useKyc } from '@/context/KycContext';
 import { useNotification } from '@/components/ClientProviders';
 import { User, Shield, Activity, CheckCircle, Lock, Monitor, DollarSign } from 'lucide-react';
-import KycModal from '@/components/KycModal';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
 
 // --- Reusable Card Component ---
@@ -45,22 +43,31 @@ const ActionButton: React.FC<{ label: string; icon: React.ElementType; color: st
 
 
 const ProfilePage: React.FC = () => {
-    const { user } = useAuth();
-    const { kycStatus, checkKycStatus } = useKyc();
+    const { user, accessToken } = useAuth();
     const { addNotification } = useNotification();
     const [profileData, setProfileData] = useState<any>(null);
     const [activityLog, setActivityLog] = useState<any[]>([]);
     const [isFullLogLoaded, setIsFullLogLoaded] = useState(false);
-    const [isKycModalOpen, setIsKycModalOpen] = useState(false);
     const [isChangePasswordModalOpen, setIsChangePasswordModalOpen] = useState(false);
 
     useEffect(() => {
+
         const fetchProfileData = async () => {
+            if (!accessToken) {
+                console.error('No access token available for profile fetch');
+                return;
+            }
             try {
-                const response = await fetch('/api/profile');
+                const response = await fetch('/api/profile', {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`,
+                    },
+                });
                 if (response.ok) {
                     const data = await response.json();
                     setProfileData(data);
+                } else {
+                    console.error('Profile fetch failed:', response.status, response.statusText);
                 }
             } catch (error: any) {
                 console.error('Error fetching profile data:', error);
@@ -68,11 +75,21 @@ const ProfilePage: React.FC = () => {
         };
 
         const fetchActivityLog = async () => {
+            if (!accessToken) {
+                console.error('No access token available for activity log fetch');
+                return;
+            }
             try {
-                const response = await fetch('/api/activity-log');
+                const response = await fetch('/api/activity-log', {
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`,
+                    },
+                });
                 if (response.ok) {
                     const data = await response.json();
                     setActivityLog(data);
+                } else {
+                    console.error('Activity log fetch failed:', response.status, response.statusText);
                 }
             } catch (error: any) {
                 console.error('Error fetching activity log:', error);
@@ -84,8 +101,16 @@ const ProfilePage: React.FC = () => {
     }, []);
 
     const fetchFullActivityLog = async () => {
+        if (!accessToken) {
+            console.error('No access token available for full activity log fetch');
+            return;
+        }
         try {
-            const response = await fetch('/api/activity-log?full=true');
+            const response = await fetch('/api/activity-log?full=true', {
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                },
+            });
             if (response.ok) {
                 const data = await response.json();
                 setActivityLog(data);
@@ -93,38 +118,6 @@ const ProfilePage: React.FC = () => {
             }
         } catch (error: any) {
             console.error('Error fetching full activity log:', error);
-        }
-    };
-
-    const handleKycSubmit = async (kycData: { fullName: string; dateOfBirth: string; address: string; documentImage?: string; selfieImage?: string; idType?: string; idNumber?: string; phoneNumber?: string; nationality?: string }) => {
-        if (!user || !user.accessToken) {
-            addNotification('Authentication error. Please log in again.', 'error');
-            return;
-        }
-
-        setIsKycModalOpen(false);
-
-        try {
-            const response = await fetch('/api/kyc', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${user.accessToken}`,
-                },
-                body: JSON.stringify(kycData),
-            });
-
-            if (response.ok) {
-                addNotification('KYC documents submitted successfully!', 'success');
-                // Refresh the KYC status
-                await checkKycStatus();
-            } else {
-                const errorData = await response.json();
-                addNotification(errorData.error || 'KYC submission failed.', 'error');
-            }
-        } catch (error: any) {
-            console.error('KYC submission error:', error);
-            addNotification('An error occurred during submission.', 'error');
         }
     };
 
@@ -139,7 +132,7 @@ const ProfilePage: React.FC = () => {
             const errorData = await response.json();
             throw new Error(errorData.message || 'Failed to change password');
         }
-        
+
         addNotification('Password changed successfully!', 'success');
         setIsChangePasswordModalOpen(false);
     };
@@ -169,43 +162,8 @@ const ProfilePage: React.FC = () => {
         return `${month}/${day}/${year}`;
     }
 
-    const getKycAction = () => {
-        if (kycStatus === 'Verified') {
-            return (
-                <span className="px-3 py-1 text-xs font-semibold text-green-800 bg-green-100 rounded-full dark:bg-green-900 dark:text-green-300">
-                    Verified
-                </span>
-            );
-        }
-        if (kycStatus === 'Pending Review') {
-            return (
-                <span className="px-3 py-1 text-xs font-semibold text-yellow-800 bg-yellow-100 rounded-full dark:bg-yellow-900 dark:text-yellow-300">
-                    Pending
-                </span>
-            );
-        }
-        if (kycStatus === 'Rejected') {
-             return (
-                <button onClick={() => setIsKycModalOpen(true)} className="px-3 py-1 text-xs font-semibold text-red-800 bg-red-100 rounded-full dark:bg-red-900 dark:text-red-300 hover:bg-red-200">
-                    Retry KYC
-                </button>
-            );
-        }
-        // Not Verified
-        return (
-            <button onClick={() => setIsKycModalOpen(true)} className="px-3 py-1 text-xs font-semibold text-indigo-800 bg-indigo-100 rounded-full dark:bg-indigo-900 dark:text-indigo-300 hover:bg-indigo-200">
-                Verify KYC
-            </button>
-        );
-    };
-
     return (
         <>
-            <KycModal
-                isOpen={isKycModalOpen}
-                onClose={() => setIsKycModalOpen(false)}
-                onSubmit={handleKycSubmit}
-            />
             <ChangePasswordModal
                 isOpen={isChangePasswordModalOpen}
                 onClose={() => setIsChangePasswordModalOpen(false)}
@@ -214,7 +172,7 @@ const ProfilePage: React.FC = () => {
 
             <div className="min-h-screen p-4 space-y-8 bg-gray-50 dark:bg-gray-900">
                 <h1 className="text-4xl font-extrabold text-gray-900 dark:text-white">Account Settings</h1>
-                
+
                 <div className='flex items-center pb-4 space-x-6 border-b border-gray-200 dark:border-gray-700'>
                     <div className="flex items-center justify-center w-20 h-20 text-3xl font-bold text-white bg-indigo-500 border-4 border-white rounded-full shadow-md dark:border-gray-800">
                         {profile.name.charAt(0)}
@@ -231,12 +189,6 @@ const ProfilePage: React.FC = () => {
                             <DetailItem label="Name" value={profile.name} icon={User} />
                             <DetailItem label="Email" value={profile.email} icon={Monitor} />
                             <DetailItem label="Member Since" value={profile.since} icon={Activity} />
-                            <DetailItem 
-                                label="Verification Status" 
-                                value={kycStatus} 
-                                icon={CheckCircle} 
-                                action={getKycAction()}
-                            />
                         </div>
                     </Card>
 
@@ -253,7 +205,7 @@ const ProfilePage: React.FC = () => {
                         </div>
                     </Card>
                 </div>
-                
+
                 <div className='grid grid-cols-1 gap-8 lg:grid-cols-3'>
                     <Card title="Security & Access" className='lg:col-span-3'>
                         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -264,19 +216,19 @@ const ProfilePage: React.FC = () => {
                                 </div>
                                 <p className='text-sm text-gray-700 dark:text-gray-300'>2FA is **Enabled**.</p>
                             </div>
-                            
+
                             <div className="space-y-3">
-                                <ActionButton 
-                                    label="Manage 2FA" 
-                                    icon={Lock} 
-                                    color="indigo" 
-                                    onClick={() => handleAction('Manage 2FA')} 
+                                <ActionButton
+                                    label="Manage 2FA"
+                                    icon={Lock}
+                                    color="indigo"
+                                    onClick={() => handleAction('Manage 2FA')}
                                 />
-                                <ActionButton 
-                                    label="Change Password" 
-                                    icon={Monitor} 
-                                    color="gray" 
-                                    onClick={() => setIsChangePasswordModalOpen(true)} 
+                                <ActionButton
+                                    label="Change Password"
+                                    icon={Monitor}
+                                    color="gray"
+                                    onClick={() => setIsChangePasswordModalOpen(true)}
                                 />
                             </div>
                         </div>

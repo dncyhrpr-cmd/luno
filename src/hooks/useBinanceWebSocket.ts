@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { binanceAPI } from '../lib/binance-api';
 
 export interface PriceUpdate {
     symbol: string;
@@ -40,20 +41,41 @@ export const useBinanceWebSocket = (symbols: string[]) => {
             return;
         }
 
-        const connect = () => {
+        const connect = async () => {
             if (isConnectingRef.current || reconnectAttemptsRef.current >= 3) {
                 return; // Already connecting or max retries reached
             }
             isConnectingRef.current = true;
             // Construct the stream URL from the symbols - limit to first 4 to avoid overload
             const limitedSymbols = symbols.slice(0, 4);
-            const symbolsList = limitedSymbols
-                .map(s => s.toLowerCase().replace(/usdt$/i, ''))
-                .map(s => `${s}usdt@ticker`)
-                .join('/');
+            console.log('Symbols received:', symbols);
+            console.log('Limited symbols:', limitedSymbols);
 
-            const wsUrl = `wss://stream.binance.com:9443/stream?streams=${symbolsList}`;
-            console.log('Connecting to Binance WebSocket (attempt', reconnectAttemptsRef.current + 1, '):', wsUrl);
+            // Validate symbols against Binance API
+            let wsUrl: string;
+            try {
+                const validSymbols = await binanceAPI.getUSDTSymbols();
+                console.log('Valid USDT symbols from Binance (first 10):', validSymbols.slice(0, 10));
+                const filteredSymbols = limitedSymbols.filter(s => validSymbols.includes(s.toUpperCase().replace(/USDT$/i, '')));
+                console.log('Filtered valid symbols:', filteredSymbols);
+                if (filteredSymbols.length === 0) {
+                    console.error('No valid symbols found for WebSocket streams.');
+                    isConnectingRef.current = false;
+                    return;
+                }
+                const symbolsList = filteredSymbols
+                    .map(s => s.toLowerCase().replace(/usdt$/i, ''))
+                    .map(s => `${s}usdt@ticker`)
+                    .join('/');
+                console.log('Constructed streams list:', symbolsList);
+
+                wsUrl = `wss://stream.binance.com:9443/stream?streams=${symbolsList}`;
+                console.log('Connecting to Binance WebSocket (attempt', reconnectAttemptsRef.current + 1, '):', wsUrl);
+            } catch (error) {
+                console.error('Error validating symbols:', error);
+                isConnectingRef.current = false;
+                return;
+            }
 
             const ws = new WebSocket(wsUrl);
             wsRef.current = ws;
@@ -103,6 +125,9 @@ export const useBinanceWebSocket = (symbols: string[]) => {
                     isTrusted: error.isTrusted,
                     eventPhase: error.eventPhase
                 });
+                if (ws.readyState === 3) {
+                    console.error('WebSocket closed abnormally. Possible causes: invalid streams, network issues, or server rejection.');
+                }
                 setIsConnected(false);
                 isConnectingRef.current = false;
                 reconnectAttemptsRef.current++;
@@ -111,7 +136,9 @@ export const useBinanceWebSocket = (symbols: string[]) => {
                     console.log('Attempting to reconnect due to WebSocket error (attempt', reconnectAttemptsRef.current, ')...');
                     reconnectTimeoutRef.current = setTimeout(() => {
                         reconnectTimeoutRef.current = null;
-                        connect();
+                        (async () => {
+                            await connect();
+                        })();
                     }, 3000);
                 } else if (reconnectAttemptsRef.current >= 3) {
                     console.warn('Max WebSocket reconnection attempts reached. Giving up.');
@@ -121,7 +148,14 @@ export const useBinanceWebSocket = (symbols: string[]) => {
             ws.onclose = (event) => {
                 setIsConnected(false);
                 isConnectingRef.current = false;
-                console.log('Binance WebSocket disconnected. Code:', event.code, 'Reason:', event.reason);
+                if (event.code === 1000) {
+                    console.log('Binance WebSocket closed normally. Code:', event.code, 'Reason:', event.reason);
+                } else {
+                    console.log('Binance WebSocket disconnected. Code:', event.code, 'Reason:', event.reason);
+                    if (event.code === 1006) {
+                        console.error('Connection closed abnormally (code 1006). Possible causes: network issues, invalid streams, or server rejection.');
+                    }
+                }
 
                 // Reconnect if the disconnection was not intentional (code 1000) and under max attempts
                 if (event.code !== 1000 && !reconnectTimeoutRef.current && reconnectAttemptsRef.current < 3) {
@@ -129,7 +163,9 @@ export const useBinanceWebSocket = (symbols: string[]) => {
                     console.log('Attempting to reconnect in 3 seconds (attempt', reconnectAttemptsRef.current, ')...');
                     reconnectTimeoutRef.current = setTimeout(() => {
                         reconnectTimeoutRef.current = null;
-                        connect();
+                        (async () => {
+                            await connect();
+                        })();
                     }, 3000);
                 } else if (reconnectAttemptsRef.current >= 3) {
                     console.warn('Max WebSocket reconnection attempts reached. Giving up.');
@@ -137,7 +173,9 @@ export const useBinanceWebSocket = (symbols: string[]) => {
             };
         };
 
-        connect();
+        (async () => {
+            await connect();
+        })();
 
         // Cleanup function to be called on component unmount or when symbols change
         return () => {

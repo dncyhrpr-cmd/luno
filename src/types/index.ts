@@ -17,8 +17,8 @@ export type PageName =
   | 'Orders'
   | 'Profile'
   | 'Settings'
+  | 'Support'
   | 'Admin'
-  | 'AdminKYC'
   | 'Login'
   | 'Signup';
 

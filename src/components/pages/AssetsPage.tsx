@@ -1,12 +1,12 @@
-
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Wallet, Plus, ArrowDown, X, TrendingUp, TrendingDown, Info, AlertCircle } from 'lucide-react';
 import { safeFetch } from '../../lib/safeFetch';
 import { useBinanceWebSocket } from '../../hooks/useBinanceWebSocket';
-import { Wallet, Plus, ArrowDown, X } from 'lucide-react';
 import { User } from '../../types/index';
 
+// --- Types ---
 interface Asset {
   id: string;
   symbol: string;
@@ -17,357 +17,388 @@ interface Asset {
 interface PortfolioData {
   balance: number;
   assets: Asset[];
-  totalPortfolioValue: number;
 }
 
+// --- Shared Components ---
+
 const Card: React.FC<{ title?: string; children: React.ReactNode; className?: string }> = ({ title, children, className = '' }) => (
-  <div className={`bg-white dark:bg-gray-800 p-4 md:p-6 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 ${className}`}>
-    {title && <h2 className="mb-4 text-lg font-semibold text-gray-800 md:text-xl dark:text-gray-100">{title}</h2>}
+  <div className={`bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 ${className}`}>
+    {title && <h2 className="flex items-center gap-2 mb-6 text-lg font-bold text-gray-900 dark:text-white">{title}</h2>}
     {children}
   </div>
 );
 
+const Notification: React.FC<{ message: string; type: 'success' | 'error'; onClose: () => void }> = ({ message, type, onClose }) => (
+  <div className={`fixed bottom-5 right-5 p-4 rounded-lg shadow-2xl flex items-center gap-3 z-50 animate-in slide-in-from-right ${type === 'success' ? 'bg-green-600' : 'bg-red-600'} text-white`}>
+    <span>{message}</span>
+    <button onClick={onClose}><X size={18} /></button>
+  </div>
+);
+
+// --- Sub-components ---
+
 const AssetRow: React.FC<{ asset: Asset; currentPrice: number; onSell: (asset: Asset) => void }> = React.memo(({ asset, currentPrice, onSell }) => {
-    const currentValue = (asset?.quantity || 0) * (currentPrice || asset?.averagePrice || 0);
-    const costBasis = (asset?.quantity || 0) * (asset?.averagePrice || 0);
-    const pnl = currentValue - costBasis;
-    const pnlPct = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
-
-    return (
-    <div className="grid items-center grid-cols-1 p-4 border-b border-gray-100 md:grid-cols-4 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
-      <div className="md:col-span-1">
-        <div className="text-lg font-bold text-gray-900 dark:text-white">{asset?.symbol?.replace('USDT', '') || 'N/A'}</div>
-        <div className="text-xs text-gray-500 dark:text-gray-400">Avg ${asset?.averagePrice?.toFixed(2)}</div>
-        <button onClick={() => onSell(asset)} className="px-2 py-1 mt-1 text-xs text-white bg-red-500 rounded hover:bg-red-600">Sell</button>
-      </div>
-      <div className="mt-2 text-left md:text-right md:mt-0">
-        <div className="text-sm text-gray-500 dark:text-gray-300 md:hidden">Quantity:</div>
-        <div className="text-sm text-gray-500 dark:text-gray-300">{(asset?.quantity || 0).toFixed(8)}</div>
-      </div>
-      <div className="mt-2 text-left md:text-right md:mt-0">
-        <div className="text-sm text-gray-400 md:hidden">Value:</div>
-        <div className="text-sm text-gray-400">${(currentPrice || asset?.averagePrice || 0).toFixed(2)}</div>
-        <div className="font-medium dark:text-white">${currentValue.toFixed(2)}</div>
-      </div>
-      <div className="mt-2 text-left md:text-right md:mt-0">
-        <div className="text-sm md:hidden">P&L:</div>
-        <div className={`text-sm ${pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div>
-        <div className={`text-xs ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{pnlPct.toFixed(2)}%</div>
-      </div>
-    </div>
-    );
-  });
-AssetRow.displayName = 'AssetRow';
-
-const TransactionForm: React.FC<{
-  transactionType: 'deposit' | 'withdraw';
-  user: User | null;
-  fetchData: () => void;
-  onClose: () => void;
-}> = ({ transactionType, user, fetchData, onClose }) => {
-  const [amount, setAmount] = useState('');
-
-  const handleTransaction = async () => {
-    if (!amount || parseFloat(amount) <= 0) {
-        alert('Please enter a valid amount');
-        return;
-    }
-
-    try {
-        if (!user || !user.accessToken) {
-            alert('Please login first');
-            return;
-        }
-        const token = user.accessToken;
-
-        const response = await fetch('/api/portfolio', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({
-                type: transactionType,
-                amount: parseFloat(amount)
-            })
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            alert(`${transactionType} of $${parseFloat(amount).toFixed(2)} successful!`);
-            setAmount('');
-            fetchData();
-            onClose();
-        } else {
-            alert(`${transactionType} failed: ${data.error}`);
-        }
-    } catch (error) {
-        alert(`${transactionType} failed. Please try again.`);
-    }
-  };
+  const currentValue = asset.quantity * currentPrice;
+  const costBasis = asset.quantity * asset.averagePrice;
+  const pnl = currentValue - costBasis;
+  const pnlPct = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+  const isPositive = pnl >= 0;
 
   return (
-    <Card className="mt-6 lg:col-span-3">
-        <div className="flex items-center justify-between">
-            <h3 className="text-2xl font-bold dark:text-white">{transactionType === 'deposit' ? 'Deposit' : 'Withdraw'}</h3>
-            <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700">
-                <X className="w-6 h-6 text-gray-500 dark:text-gray-400" />
-            </button>
+    <div className="grid items-center grid-cols-2 gap-4 py-4 transition-colors border-b border-gray-50 md:grid-cols-4 dark:border-gray-700/50 hover:bg-gray-50/50 dark:hover:bg-gray-700/30">
+      <div>
+        <div className="font-bold text-gray-900 dark:text-white">{asset.symbol.replace('USDT', '')}</div>
+        <div className="text-xs text-gray-500">Avg: ${asset.averagePrice.toLocaleString()}</div>
+      </div>
+      <div className="text-right md:text-left">
+        <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{asset.quantity.toLocaleString(undefined, { maximumFractionDigits: 8 })}</div>
+        <button onClick={() => onSell(asset)} className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider hover:underline">Liquidate</button>
+      </div>
+      <div className="hidden text-right md:block">
+        <div className="text-sm font-semibold dark:text-white">${currentValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        <div className="text-xs text-gray-400">${currentPrice.toLocaleString()}</div>
+      </div>
+      <div className="text-right">
+        <div className={`text-sm font-bold ${isPositive ? 'text-emerald-500' : 'text-rose-500'}`}>
+          {isPositive ? '+' : ''}{pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
         </div>
-      <div className="mt-4 space-y-4">
-        <div>
-          <label className="block mb-1 text-sm font-medium text-gray-500 dark:text-gray-300">Amount (USD)</label>
-          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" placeholder="Enter amount" />
-        </div>
-        <div className="flex space-x-4">
-          <button onClick={handleTransaction} className="flex-1 py-2 font-semibold text-white transition-colors bg-blue-600 rounded-lg hover:bg-blue-700">Submit</button>
+        <div className={`text-xs flex items-center justify-end gap-1 ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+          {isPositive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+          {pnlPct.toFixed(2)}%
         </div>
       </div>
-    </Card>
+    </div>
   );
-};
+});
 
+// --- Main Page Component ---
 
 const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showDeposit, setShowDeposit] = useState(false);
-  const [showWithdraw, setShowWithdraw] = useState(false);
-  const [showSellAsset, setShowSellAsset] = useState<Asset | null>(null);
+  const [activeModal, setActiveModal] = useState<'deposit' | 'withdraw' | 'sell' | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+  const [notify, setNotify] = useState<{ m: string; t: 'success' | 'error' } | null>(null);
+  const [formLoading, setFormLoading] = useState(false);
 
+  // Binance WS Integration
+  const assetSymbols = useMemo(() => portfolio?.assets?.map(a => a.symbol) || [], [portfolio]);
+  const { prices: wsPrices } = useBinanceWebSocket(assetSymbols);
 
   const fetchData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
-    // Prefer token from `user` prop, but fall back to localStorage (helps non-SSR flows)
-    const tokenFromProp = user?.accessToken;
-    let token = tokenFromProp || null;
+    const token = user?.accessToken || (typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null);
     if (!token) {
-      try {
-        token = localStorage.getItem('accessToken');
-      } catch (e) {
-        token = null;
-      }
-    }
-
-    if (!token) {
+      setError('Session expired. Please log in.');
       setIsLoading(false);
-      setError('Please log in to view your assets.');
       return;
     }
 
     try {
-      const headers: any = { 'Authorization': `Bearer ${token}` };
-
-      const res = await safeFetch('/api/portfolio', { headers }, 2, 700);
-      if (!res.ok) {
-        console.error('Portfolio API safeFetch error:', res.error, 'status:', res.status);
-        setError(res.error || 'Failed to fetch portfolio data.');
-      } else {
-        setPortfolio(res.data as PortfolioData);
-      }
-    } catch (error: any) {
-      console.error('Unexpected error fetching portfolio:', error);
-      setError(`An unexpected error occurred while fetching data. ${String(error)}`);
+      const res = await safeFetch('/api/portfolio', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) setPortfolio(res.data);
+      else setError(res.error || 'Failed to load assets');
+    } catch (err) {
+      setError('Connection error');
     } finally {
       setIsLoading(false);
     }
   }, [user]);
 
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Listen for portfolio updates from other pages (e.g., after buying assets)
   useEffect(() => {
-    fetchData();
+      const handlePortfolioUpdate = () => {
+          fetchData();
+      };
+      window.addEventListener('portfolio:updated', handlePortfolioUpdate);
+      return () => window.removeEventListener('portfolio:updated', handlePortfolioUpdate);
   }, [fetchData]);
 
-  // Listen for portfolio updates triggered elsewhere in the app
-  useEffect(() => {
-    const onPortfolioUpdated = () => {
-      fetchData();
-    };
-    if (typeof window !== 'undefined' && window.addEventListener) {
-      window.addEventListener('portfolio:updated', onPortfolioUpdated);
-    }
-    return () => {
-      if (typeof window !== 'undefined' && window.removeEventListener) {
-        window.removeEventListener('portfolio:updated', onPortfolioUpdated as EventListener);
-      }
-    };
-  }, [fetchData]);
-
-  // Prepare symbols for the Binance WebSocket (base symbols like 'BTC', 'ETH')
-  const assetSymbols = portfolio?.assets?.map(a => a.symbol) || [];
-  const { prices: wsPrices } = useBinanceWebSocket(assetSymbols);
-
-  // Calculate total portfolio value using current prices
-  const totalPortfolioValue = useMemo(() => {
-    if (!portfolio) return 0;
-    const totalAssetValue = portfolio.assets.reduce((sum, asset) => {
-      const currentPrice = wsPrices.get(asset.symbol)?.price || asset.averagePrice || 0;
-      return sum + (asset.quantity * currentPrice);
+  // Derived Calculations
+  const stats = useMemo(() => {
+    if (!portfolio) return { total: 0, pnl: 0, pnlPct: 0 };
+    const totalAssets = portfolio.assets.reduce((sum, a) => {
+      const price = wsPrices.get(a.symbol)?.price || a.averagePrice;
+      return sum + (a.quantity * price);
     }, 0);
-    return portfolio.balance + totalAssetValue;
+    const totalCost = portfolio.assets.reduce((sum, a) => sum + (a.quantity * a.averagePrice), 0);
+    const totalValue = totalAssets + portfolio.balance;
+    const pnl = totalAssets - totalCost;
+    return { 
+        total: totalValue, 
+        pnl, 
+        pnlPct: totalCost > 0 ? (pnl / totalCost) * 100 : 0,
+        assetRatio: totalValue > 0 ? (totalAssets / totalValue) * 100 : 0
+    };
   }, [portfolio, wsPrices]);
 
-  // Sell form component
-  const SellForm: React.FC<{ asset: Asset; onClose: () => void; refresh: () => Promise<void> }> = ({ asset, onClose, refresh }) => {
-    const [qty, setQty] = useState('');
-    const [submitting, setSubmitting] = useState(false);
+  const handleAction = async (type: string, payload: any) => {
+    setFormLoading(true);
+    const token = user?.accessToken || localStorage.getItem('accessToken');
 
-    const handleSell = async () => {
-      const parsed = parseFloat(qty);
-      if (!parsed || parsed <= 0) {
-        alert('Enter a valid quantity to sell.');
-        return;
+    try {
+      const endpoint = type === 'sell' ? '/api/orders' : '/api/portfolio';
+      const body = type === 'sell'
+        ? {
+            ...payload,
+            type: 'SELL',
+            orderType: 'MARKET',
+            price: wsPrices.get(payload.symbol)?.price || 0,
+            leverage: 1
+          }
+        : { ...payload, type };
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(body)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setNotify({ m: data.message || 'Request processed successfully', t: 'success' });
+        fetchData();
+        setActiveModal(null);
+      } else {
+        const errData = await res.json();
+        setNotify({ m: errData.error || 'Transaction failed', t: 'error' });
       }
-      if (parsed > asset.quantity) {
-        alert('You cannot sell more than your holding quantity.');
-        return;
-      }
-
-      let token = user?.accessToken || null;
-      try { token = token || localStorage.getItem('accessToken'); } catch (e: any) { }
-      if (!token) {
-        alert('Please login to place sell orders.');
-        return;
-      }
-
-      const currentPrice = wsPrices.get(asset.symbol)?.price || asset.averagePrice || 0;
-
-      setSubmitting(true);
-      try {
-        const res = await safeFetch('/api/orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ type: 'SELL', orderType: 'MARKET', symbol: asset.symbol, quantity: parsed, price: currentPrice, leverage: 1 })
-        }, 2, 800);
-        if (res.ok && res.data.success) {
-          alert('Sell order placed successfully.');
-          await refresh();
-          onClose();
-        } else {
-          alert(`Sell failed: ${res.error || res.data?.error || res.data?.message || JSON.stringify(res.data)}`);
-        }
-      } catch (err: any) {
-        console.error('Sell request failed:', err);
-        alert('Sell failed. Please try again.');
-      } finally {
-        setSubmitting(false);
-      }
-    };
-
-    return (
-      <Card className="mt-6 lg:col-span-3">
-        <div className="flex items-center justify-between">
-            <h3 className="text-2xl font-bold dark:text-white">Sell {asset.symbol.replace('USDT', '')}</h3>
-            <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700">
-                <X className="w-6 h-6 text-gray-500 dark:text-gray-400" />
-            </button>
-        </div>
-        <div className="mt-4 space-y-4">
-          <div>
-            <label className="block mb-1 text-sm font-medium text-gray-500 dark:text-gray-300">Quantity ({asset.symbol.replace('USDT', '')})</label>
-            <input type="number" value={qty} onChange={(e) => setQty(e.target.value)} className="w-full p-3 border border-gray-300 rounded-lg dark:border-gray-600 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white" placeholder={`Max ${asset.quantity}`} />
-            <div className="mt-1 text-xs text-gray-400">Available: {asset.quantity.toFixed(8)}</div>
-          </div>
-          <div className="flex space-x-4">
-            <button onClick={handleSell} disabled={submitting} className="flex-1 py-2 font-semibold text-white transition-colors bg-red-600 rounded-lg hover:bg-red-700">{submitting ? 'Placing...' : 'Sell Now'}</button>
-          </div>
-        </div>
-      </Card>
-    );
+    } catch {
+      setNotify({ m: 'System error. Try again later.', t: 'error' });
+    } finally {
+      setFormLoading(false);
+    }
   };
 
-
-  if (isLoading) {
-    return <div className="flex items-center justify-center h-screen dark:bg-gray-900"><p className="text-xl text-indigo-600 dark:text-indigo-400">Loading portfolio...</p></div>;
-  }
-
-  if (error) {
-    return <div className="flex items-center justify-center h-screen dark:bg-gray-900"><p className="text-red-500 dark:text-red-400">{error}</p></div>;
-  }
-
-  if (!portfolio) {
-    return <div className="flex items-center justify-center h-screen dark:bg-gray-900"><p className="text-gray-500 dark:text-gray-400">No portfolio data available.</p></div>;
-  }
+  if (isLoading) return (
+    <div className="flex flex-col items-center justify-center min-h-screen space-y-4 bg-gray-50 dark:bg-gray-900">
+      <div className="w-12 h-12 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin" />
+      <p className="text-gray-500 animate-pulse">Syncing Ledger...</p>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen p-4 space-y-8 md:p-8 bg-gray-50 dark:bg-gray-900">
-      <h1 className="flex items-center text-4xl font-extrabold text-gray-900 dark:text-white">
-        <Wallet className="w-8 h-8 mr-3 text-indigo-500" />
-        My Assets
-      </h1>
-      
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-1">
-          <h3 className="mb-4 text-lg font-semibold text-gray-800 dark:text-gray-100">Portfolio Summary</h3>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-3 rounded-lg bg-indigo-50 dark:bg-gray-700">
-              <Wallet className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+    <div className="min-h-screen p-4 pb-20 md:p-10 bg-gray-50 dark:bg-gray-900">
+      {notify && <Notification message={notify.m} type={notify.t} onClose={() => setNotify(null)} />}
+
+      <header className="flex flex-col gap-4 mb-10 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-3xl font-black text-gray-900 dark:text-white">Portfolio</h1>
+          <p className="text-sm text-gray-500">Real-time market valuation of your holdings</p>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={() => setActiveModal('deposit')} className="flex items-center gap-2 px-6 py-3 font-bold text-white transition-all bg-indigo-600 rounded-xl hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-500/30">
+            <Plus size={18} /> Deposit
+          </button>
+          <button onClick={() => setActiveModal('withdraw')} className="flex items-center gap-2 px-6 py-3 font-bold text-gray-700 transition-all bg-white border border-gray-200 rounded-xl dark:bg-gray-800 dark:text-white dark:border-gray-700 hover:bg-gray-50">
+            <ArrowDown size={18} /> Withdraw
+          </button>
+        </div>
+      </header>
+
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+        {/* Left Column: Stats */}
+        <div className="space-y-6 lg:col-span-4">
+          <Card>
+            <div className="space-y-6">
               <div>
-                <p className="text-sm text-gray-500 dark:text-gray-300">Available Balance</p>
-                <p className="text-2xl font-bold dark:text-white">${(portfolio?.balance || 0).toFixed(2)}</p>
+                <label className="text-xs font-bold tracking-widest text-gray-400 uppercase">Net Worth</label>
+                <div className="text-4xl font-black text-gray-900 dark:text-white">${stats.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 py-4 border-gray-100 border-y dark:border-gray-700">
+                <div>
+                  <div className="text-xs text-gray-500">Available USD</div>
+                  <div className="text-lg font-bold dark:text-white">${portfolio?.balance.toLocaleString()}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-gray-500">Total P&L</div>
+                  <div className={`text-lg font-bold ${stats.pnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {stats.pnl >= 0 ? '+$' : '-$'}{Math.abs(stats.pnl).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between mb-2 text-xs font-bold">
+                  <span className="text-gray-500">Asset Allocation</span>
+                  <span className="text-indigo-500">{(stats.assetRatio || 0).toFixed(0)}% Crypto</span>
+                </div>
+                <div className="w-full h-2 overflow-hidden bg-gray-100 rounded-full dark:bg-gray-700">
+                  <div className="h-full transition-all duration-1000 bg-indigo-500" style={{ width: `${stats.assetRatio}%` }} />
+                </div>
               </div>
             </div>
-            <div className="text-center">
-              <p className="text-sm text-gray-500 dark:text-gray-300">Total Portfolio Value</p>
-              <p className="text-3xl font-bold text-green-600 dark:text-green-400">${totalPortfolioValue.toFixed(2)}</p>
+          </Card>
+          
+          <div className="p-4 border border-blue-100 rounded-2xl bg-blue-50/50 dark:bg-blue-900/10 dark:border-blue-900/30">
+            <div className="flex gap-3">
+              <Info className="text-blue-500 shrink-0" size={20} />
+              <p className="text-xs leading-relaxed text-blue-700 dark:text-blue-300">
+                Prices are streamed live from Binance. Your "Net Worth" includes both your cash balance and the current market value of your tokens.
+              </p>
             </div>
           </div>
-        </Card>
+        </div>
 
-        <Card title="Your Holdings" className="lg:col-span-2">
-            <div className="grid grid-cols-4 p-3 text-xs font-semibold text-gray-500 uppercase border-b border-gray-200 dark:text-gray-400 dark:border-gray-700">
-              <div>Asset</div>
-              <div className="text-right">Quantity</div>
-              <div className="text-right">Value</div>
-              <div className="text-right">P&L</div>
+        {/* Right Column: Holdings */}
+        <div className="lg:col-span-8">
+          <Card title="Active Holdings">
+            <div className="min-h-[300px]">
+              {portfolio?.assets.length ? (
+                <>
+                  <div className="grid grid-cols-2 pb-2 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b dark:border-gray-700 md:grid-cols-4">
+                    <div>Asset</div>
+                    <div className="text-right md:text-left">Holdings</div>
+                    <div className="hidden text-right md:block">Market Value</div>
+                    <div className="text-right">Unrealized P&L</div>
+                  </div>
+                  {portfolio.assets.map(asset => (
+                    <AssetRow 
+                      key={asset.id} 
+                      asset={asset} 
+                      currentPrice={wsPrices.get(asset.symbol)?.price || asset.averagePrice}
+                      onSell={(a) => { setSelectedAsset(a); setActiveModal('sell'); }}
+                    />
+                  ))}
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-20 text-center">
+                  <div className="p-4 mb-4 bg-gray-100 rounded-full dark:bg-gray-700">
+                    <Wallet size={32} className="text-gray-400" />
+                  </div>
+                  <h3 className="text-lg font-bold dark:text-white">No assets yet</h3>
+                  <p className="max-w-xs text-sm text-gray-500">Deposit USD or place a buy order to start building your portfolio.</p>
+                </div>
+              )}
             </div>
-            {Array.isArray(portfolio?.assets) && portfolio.assets.length > 0 ? (
-              portfolio.assets.map(asset => {
-                const currentPrice = wsPrices.get(asset.symbol)?.price || asset.averagePrice || 0;
-                return <AssetRow key={asset.id} asset={asset} currentPrice={currentPrice} onSell={setShowSellAsset} />
-              })
-            ) : (
-              <div className="p-8 text-center text-gray-500 dark:text-gray-400">No assets found.</div>
-            )}
-        </Card>
-
-        <Card title="Transactions" className="lg:col-span-3">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <button onClick={() => { setShowDeposit(!showDeposit); setShowWithdraw(false); }} className="flex items-center justify-center px-4 py-3 font-semibold text-white transition-colors bg-green-600 rounded-lg hover:bg-green-700"><Plus className="w-5 h-5 mr-2" />Deposit</button>
-              <button onClick={() => { setShowWithdraw(!showWithdraw); setShowDeposit(false); }} className="flex items-center justify-center px-4 py-3 font-semibold text-white transition-colors bg-orange-600 rounded-lg hover:bg-orange-700"><ArrowDown className="w-5 h-5 mr-2" />Withdraw</button>
-          </div>
-        </Card>
-        
-        {showDeposit && (
-          <TransactionForm
-            transactionType="deposit"
-            user={user}
-            fetchData={fetchData}
-            onClose={() => setShowDeposit(false)}
-          />
-        )}
-
-        {showWithdraw && (
-          <TransactionForm
-            transactionType="withdraw"
-            user={user}
-            fetchData={fetchData}
-            onClose={() => setShowWithdraw(false)}
-          />
-        )}
-
-        {showSellAsset && (
-          <SellForm
-            asset={showSellAsset}
-            onClose={() => setShowSellAsset(null)}
-            refresh={fetchData}
-          />
-        )}
-
+          </Card>
+        </div>
       </div>
+
+      {/* Unified Action Modal */}
+      {activeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md overflow-hidden duration-200 bg-white shadow-2xl dark:bg-gray-800 rounded-3xl animate-in fade-in zoom-in">
+            <div className="flex items-center justify-between p-6 border-b dark:border-gray-700">
+              <h3 className="text-xl font-black capitalize dark:text-white">
+                {activeModal} {selectedAsset?.symbol.replace('USDT', '')}
+              </h3>
+              <button onClick={() => { setActiveModal(null); setSelectedAsset(null); }} className="p-2 transition-colors rounded-full hover:bg-gray-100 dark:hover:bg-gray-700">
+                <X size={20} className="text-gray-500" />
+              </button>
+            </div>
+            
+            <form className="p-6 space-y-4" onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              const amount = parseFloat(formData.get('amount') as string);
+              if (activeModal === 'sell') {
+                handleAction('sell', { symbol: selectedAsset?.symbol, quantity: amount });
+              } else if (activeModal === 'withdraw') {
+                const bankName = formData.get('bankName') as string;
+                const holderName = formData.get('holderName') as string;
+                const accountNumber = formData.get('accountNumber') as string;
+                const ifscCode = formData.get('ifscCode') as string;
+                handleAction(activeModal, { amount, bankName, holderName, accountNumber, ifscCode });
+              } else {
+                handleAction(activeModal, { amount });
+              }
+            }}>
+              <div>
+                <label className="block mb-2 text-xs font-bold text-gray-400 uppercase">
+                    {activeModal === 'sell' ? 'Quantity to Liquidate' : 'Amount (USD)'}
+                </label>
+                <div className="relative">
+                    <input 
+                        name="amount"
+                        type="number" 
+                        step="any"
+                        required
+                        autoFocus
+                        className="w-full px-4 py-4 text-lg font-bold border-2 border-gray-100 rounded-2xl focus:border-indigo-500 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        placeholder="0.00"
+                    />
+                    {activeModal === 'sell' && (
+                        <button 
+                            type="button"
+                            onClick={(e) => {
+                                const input = (e.currentTarget.previousSibling as HTMLInputElement);
+                                if(selectedAsset) input.value = selectedAsset.quantity.toString();
+                            }}
+                            className="absolute px-3 py-1 text-xs font-bold text-indigo-600 -translate-y-1/2 rounded-lg bg-indigo-50 right-4 top-1/2 hover:bg-indigo-100"
+                        >
+                            MAX
+                        </button>
+                    )}
+                </div>
+                {activeModal === 'sell' && (
+                    <p className="mt-2 text-xs text-gray-500">Available: {selectedAsset?.quantity} {selectedAsset?.symbol.replace('USDT','')}</p>
+                )}
+              </div>
+
+              {activeModal === 'withdraw' && (
+                <>
+                  <div>
+                    <label className="block mb-2 text-xs font-bold text-gray-400 uppercase">Bank Name</label>
+                    <input
+                      name="bankName"
+                      type="text"
+                      required
+                      className="w-full px-4 py-4 text-lg font-bold border-2 border-gray-100 rounded-2xl focus:border-indigo-500 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                      placeholder="Enter bank name"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block mb-2 text-xs font-bold text-gray-400 uppercase">Account Holder Name</label>
+                    <input
+                      name="holderName"
+                      type="text"
+                      required
+                      className="w-full px-4 py-4 text-lg font-bold border-2 border-gray-100 rounded-2xl focus:border-indigo-500 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                      placeholder="Enter account holder name"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block mb-2 text-xs font-bold text-gray-400 uppercase">Account Number</label>
+                    <input
+                      name="accountNumber"
+                      type="text"
+                      required
+                      className="w-full px-4 py-4 text-lg font-bold border-2 border-gray-100 rounded-2xl focus:border-indigo-500 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                      placeholder="Enter account number"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block mb-2 text-xs font-bold text-gray-400 uppercase">IFSC Code</label>
+                    <input
+                      name="ifscCode"
+                      type="text"
+                      required
+                      className="w-full px-4 py-4 text-lg font-bold border-2 border-gray-100 rounded-2xl focus:border-indigo-500 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                      placeholder="Enter IFSC code"
+                    />
+                  </div>
+                </>
+              )}
+
+              <button 
+                disabled={formLoading}
+                className="w-full py-4 font-black text-white transition-all bg-indigo-600 rounded-2xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {formLoading ? 'Processing...' : 'Confirm Transaction'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

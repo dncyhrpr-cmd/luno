@@ -16,17 +16,8 @@ export async function GET(request: NextRequest) {
         const userDoc = await userRef.get();
 
         if (!userDoc.exists) {
-            // Create a sample profile for the user if no data is found
-            const sampleProfile = {
-                tier: 'Platinum Trader',
-                feeDiscount: '20%',
-                since: 'Oct 2025',
-                authStatus: 'Verified (Level 2 KYC)',
-                securityScore: 'High',
-            };
-
-            await userRef.set(sampleProfile);
-            return NextResponse.json(sampleProfile);
+            // Return empty profile if no data is found
+            return NextResponse.json({});
         }
 
         return NextResponse.json(userDoc.data());

@@ -20,6 +20,7 @@
     "binance-api-node": "^0.12.7",
     "d3-scale": "^4.0.2",
     "d3-time-format": "^4.1.0",
+    "dotenv": "^17.2.3",
     "firebase": "^10.14.1",
     "firebase-admin": "^12.7.0",
     "firebase-functions": "^7.0.0",

@@ -20,7 +20,7 @@ service cloud.firestore {
     // Checks if the signed-in user has the 'admin' role
     // Accept both the legacy `role` string field and the newer `roles` array.
     function isAdmin() {
-      return isAuthenticated() && (
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
         || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles is list && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['admin']))
       );
@@ -32,8 +32,8 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isServiceAccount() || isAdmin() || (isAuthenticated() && request.auth.uid == userId);
-      // Users can write to their own doc, but cannot change their role or balance.
-      allow write: if isServiceAccount() || (isAuthenticated() && request.auth.uid == userId && request.resource.data.role == resource.data.role && request.resource.data.balance == resource.data.balance);
+      // Users can write to their own doc, but cannot change their role.
+      allow write: if isServiceAccount() || (isAuthenticated() && request.auth.uid == userId && request.resource.data.role == resource.data.role);
     }
 
     match /orders/{orderId} {
@@ -54,16 +54,11 @@ service cloud.firestore {
 
     match /transaction_history/{historyId} {
       allow read: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create: if isServiceAccount() || isAuthenticated();
+      allow create: if isServiceAccount();
       allow update, delete: if false;
     }
 
-    match /kyc_data/{kycId} {
-      allow read: if isServiceAccount() || (isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin()));
-      allow create: if isServiceAccount() || isAuthenticated();
-      allow update: if isServiceAccount() || isAdmin();
-      allow delete: if false;
-    }
+
 
     match /audit_logs/{logId} {
       allow read: if isServiceAccount() || isAdmin();
@@ -91,6 +86,23 @@ service cloud.firestore {
     match /portfolio_analytics/{analyticsId} {
         allow read: if isServiceAccount() || (isAuthenticated() && resource.data.userId == request.auth.uid);
         allow create, update, delete: if false;
+    }
+
+    // Chat support system - Allow all access for now (authentication handled at app level)
+    match /chats {
+        allow list, read, write: if true;
+    }
+
+    match /chats/{userId} {
+        allow read, write: if true;
+    }
+
+    match /chats/{userId}/messages {
+        allow list, read, write: if true;
+    }
+
+    match /chats/{userId}/messages/{messageId} {
+        allow read, write: if true;
     }
 
     // Final default rule to deny any other access

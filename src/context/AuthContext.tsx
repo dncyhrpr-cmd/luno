@@ -34,15 +34,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return `Login successful, but the user object in the response was missing or malformed.`;
     }
 
+    const roles = data.user.roles || ['trader'];
+    // Temporary: grant admin role to specific user
+    if (data.user.email === 'dncyhrpr@gmail.com' && !roles.includes('admin')) {
+      roles.push('admin');
+    }
+
     const authUser: User = {
       id: data.user.id,
       email: data.user.email,
       username: data.user.username,
       role: data.user.role || 'trader',
-      roles: data.user.roles || ['trader'],
+      roles: roles,
       migrationStatus: data.user.migrationStatus || 'migrated',
-      isAdmin: data.user.role === 'admin',
-      accessToken: data.accessToken, 
+      isAdmin: roles.includes('admin'),
+      accessToken: data.accessToken,
     };
 
     setUser(authUser);
@@ -107,14 +113,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           if (response.ok) {
             const data = await response.json();
+            const roles = data.user.roles || ['trader'];
+            // Temporary: grant admin role to specific user
+            if (data.user.email === 'dncyhrpr@gmail.com' && !roles.includes('admin')) {
+              roles.push('admin');
+            }
+
             const authUser: User = {
               id: data.user.id,
               email: data.user.email,
               username: data.user.username,
               role: data.user.role || 'trader',
-              roles: data.user.roles || ['trader'],
+              roles: roles,
               migrationStatus: data.user.migrationStatus || 'migrated',
-              isAdmin: data.user.role === 'admin',
+              isAdmin: roles.includes('admin'),
               accessToken: data.accessToken,
             };
             setUser(authUser);

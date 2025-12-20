@@ -60,17 +60,23 @@ export interface TransactionRequest {
   approvedBy?: string;
   executedAt?: any;
   processedBy?: string;
+  // Bank details for withdrawals
+  bankName?: string;
+  holderName?: string;
+  accountNumber?: string;
+  ifscCode?: string;
 }
 
 export interface TransactionHistory {
   id: string;
   userId: string;
-  type: 'deposit' | 'withdraw' | 'buy' | 'sell' | 'fee';
+  type: 'deposit' | 'withdraw' | 'buy' | 'sell' | 'fee' | 'seizure' | 'restoration';
   amount: number;
   symbol?: string;
   quantity?: number;
   price?: number;
   description: string;
+  reason?: string; // Reason for seizure or restoration
   status: 'completed' | 'pending' | 'failed';
   balanceBefore: number;
   balanceAfter: number;
@@ -220,6 +226,15 @@ export class FirestoreDatabase {
   private get db() {
     return getDb();
   }
+
+  public isFirebaseAvailable(): boolean {
+    try {
+      const db = getDb();
+      return db !== null;
+    } catch (error) {
+      return false;
+    }
+  }
   private readonly USERS_COLLECTION = 'users';
   private readonly ORDERS_COLLECTION = 'orders';
   private readonly ASSETS_COLLECTION = 'assets';
@@ -362,7 +377,7 @@ export class FirestoreDatabase {
     const reqId = 'unknown';
     try {
       const snapshot = await this.db.collection(this.ORDERS_COLLECTION).where('userId', '==', userId).get();
-      return snapshot.docs.map((doc: QueryDocumentSnapshot) => doc.data() as Order);
+      return snapshot.docs.map((doc: QueryDocumentSnapshot) => ({ id: doc.id, ...doc.data() } as Order));
     } catch (error: any) {
       structuredLog('ERROR', reqId, 'Error in getOrders', { file: 'firestore-db.ts', error: error.message, stack: error.stack });
       throw error;
@@ -380,6 +395,18 @@ export class FirestoreDatabase {
       return { id: newOrder.id, ...newOrder.data() } as Order;
     } catch (error: any) {
       structuredLog('ERROR', reqId, 'Error in createOrder', { file: 'firestore-db.ts', orderData, error: error.message, stack: error.stack });
+      throw error;
+    }
+  }
+
+  async updateOrder(orderId: string, orderData: Partial<Order>): Promise<void> {
+    const reqId = 'unknown';
+    try {
+      console.log('Updating order', { orderId, orderData });
+      await this.db.collection(this.ORDERS_COLLECTION).doc(orderId).update(orderData);
+      console.log('Order updated successfully', { orderId });
+    } catch (error: any) {
+      structuredLog('ERROR', reqId, 'Error in updateOrder', { file: 'firestore-db.ts', orderId, error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -622,7 +649,14 @@ export class FirestoreDatabase {
     const reqId = 'unknown';
     try {
       const snapshot = await this.db.collection(this.USERS_COLLECTION).get();
-      const users = snapshot.docs.map((doc: QueryDocumentSnapshot) => doc.data() as User);
+      const users = snapshot.docs.map((doc: QueryDocumentSnapshot) => {
+        const user = { id: doc.id, ...doc.data() } as User;
+        // Set default status if not present
+        if (!user.status) {
+          user.status = 'active';
+        }
+        return user;
+      });
       return { users, total: users.length };
     } catch (error: any) {
       structuredLog('ERROR', reqId, 'Error in getUsers', { file: 'firestore-db.ts', error: error.message, stack: error.stack });
@@ -721,12 +755,157 @@ export class FirestoreDatabase {
     await transaction;
   }
 
+  async processAssetSeizure(userId: string, assetsToSeize: Asset[], adminId: string, quantity?: number, reason?: string): Promise<void> {
+    const reqId = 'unknown';
+    const transaction = this.db.runTransaction(async (t) => {
+      const seizedAssets: any[] = [];
+
+      for (const asset of assetsToSeize) {
+        const assetRef = this.db.collection(this.ASSETS_COLLECTION).doc(asset.id);
+
+        // Determine quantity to seize
+        const seizeQuantity = quantity && quantity < asset.quantity ? quantity : asset.quantity;
+
+        if (seizeQuantity >= asset.quantity) {
+          // Full seizure - delete asset
+          t.delete(assetRef);
+          seizedAssets.push({ ...asset, seizedQuantity: asset.quantity });
+        } else {
+          // Partial seizure - update quantity
+          const newQuantity = asset.quantity - seizeQuantity;
+          t.update(assetRef, { quantity: newQuantity });
+          seizedAssets.push({ ...asset, seizedQuantity: seizeQuantity });
+        }
+
+        // Create transaction history for each seized asset
+        const historyRef = this.db.collection(this.TRANSACTION_HISTORY_COLLECTION).doc();
+        const historyData: Omit<TransactionHistory, 'id' | 'createdAt'> = {
+          userId,
+          type: 'seizure',
+          amount: seizeQuantity * asset.averagePrice, // Value of seized assets
+          symbol: asset.symbol,
+          quantity: seizeQuantity,
+          price: asset.averagePrice,
+          description: `Asset seized by admin ${adminId}`,
+          reason,
+          status: 'completed',
+          balanceBefore: 0, // Not applicable for asset seizure
+          balanceAfter: 0,
+        };
+        t.set(historyRef, { ...historyData, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+      }
+
+      // Create audit log
+      const auditRef = this.db.collection(this.AUDIT_LOG_COLLECTION).doc();
+      const auditData: Omit<AuditLog, 'id' | 'createdAt'> = {
+        adminId,
+        userId,
+        action: 'asset_seizure',
+        resourceType: 'user_assets',
+        resourceId: userId,
+        changes: { seizedAssets: seizedAssets.map(a => ({ symbol: a.symbol, quantity: a.seizedQuantity })) },
+        status: 'success',
+      };
+      t.set(auditRef, { ...auditData, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      // Create user alert
+      const alertRef = this.db.collection(this.ALERTS_COLLECTION).doc();
+      const alertData: Omit<Alert, 'id' | 'createdAt' | 'deleted'> = {
+        userId,
+        type: 'system',
+        title: 'Assets Seized',
+        message: `Your assets have been seized by an administrator: ${seizedAssets.map(a => `${a.seizedQuantity} ${a.symbol.replace('USDT', '')}`).join(', ')}`,
+        read: false,
+      };
+      t.set(alertRef, { ...alertData, deleted: false, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      structuredLog('INFO', reqId, 'Asset seizure transaction completed', { userId, seizedAssets: seizedAssets.length });
+    });
+
+    await transaction;
+  }
+
+  async processAssetRestoration(userId: string, symbol: string, quantity: number, price: number, adminId: string, reason?: string): Promise<void> {
+    const reqId = 'unknown';
+    const transaction = this.db.runTransaction(async (t) => {
+      // Check if user already has this asset
+      const existingAssets = await this.getAssets(userId);
+      const existingAsset = existingAssets.find(a => a.symbol === symbol);
+
+      if (existingAsset) {
+        // Update existing asset quantity
+        const newQuantity = existingAsset.quantity + quantity;
+        const newAveragePrice = ((existingAsset.quantity * existingAsset.averagePrice) + (quantity * price)) / newQuantity;
+
+        t.update(this.db.collection(this.ASSETS_COLLECTION).doc(existingAsset.id), {
+          quantity: newQuantity,
+          averagePrice: newAveragePrice
+        });
+      } else {
+        // Create new asset
+        const newAssetRef = this.db.collection(this.ASSETS_COLLECTION).doc();
+        t.set(newAssetRef, {
+          userId,
+          symbol,
+          quantity,
+          averagePrice: price,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      // Create transaction history
+      const historyRef = this.db.collection(this.TRANSACTION_HISTORY_COLLECTION).doc();
+      const historyData: Omit<TransactionHistory, 'id' | 'createdAt'> = {
+        userId,
+        type: 'restoration',
+        amount: quantity * price,
+        symbol,
+        quantity,
+        price,
+        description: `Asset restored by admin ${adminId}`,
+        reason,
+        status: 'completed',
+        balanceBefore: 0,
+        balanceAfter: 0,
+      };
+      t.set(historyRef, { ...historyData, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      // Create audit log
+      const auditRef = this.db.collection(this.AUDIT_LOG_COLLECTION).doc();
+      const auditData: Omit<AuditLog, 'id' | 'createdAt'> = {
+        adminId,
+        userId,
+        action: 'asset_restoration',
+        resourceType: 'user_assets',
+        resourceId: userId,
+        changes: { restoredAsset: { symbol, quantity, price } },
+        status: 'success',
+      };
+      t.set(auditRef, { ...auditData, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      // Create user alert
+      const alertRef = this.db.collection(this.ALERTS_COLLECTION).doc();
+      const alertData: Omit<Alert, 'id' | 'createdAt' | 'deleted'> = {
+        userId,
+        type: 'system',
+        title: 'Assets Restored',
+        message: `Your assets have been restored by an administrator: ${quantity} ${symbol.replace('USDT', '')}`,
+        read: false,
+      };
+      t.set(alertRef, { ...alertData, deleted: false, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      structuredLog('INFO', reqId, 'Asset restoration transaction completed', { userId, symbol, quantity });
+    });
+
+    await transaction;
+  }
 
   async createUser(userData: Omit<User, 'id' | 'createdAt'>, uid: string): Promise<User | null> {
     const reqId = 'unknown';
     try {
       await this.db.collection(this.USERS_COLLECTION).doc(uid).set({
         ...userData,
+        status: userData.status || 'active',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       const newUserDoc = await this.db.collection(this.USERS_COLLECTION).doc(uid).get();

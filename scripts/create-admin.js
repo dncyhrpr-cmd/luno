@@ -7,7 +7,7 @@ async function createAdmin() {
 
     const name = 'Admin';
     const email = 'dncyhrpr@gmail.com';
-    const password = 'khan212';
+   
 
     const response = await fetch('http://localhost:3000/api/auth/signup', {
       method: 'POST',

@@ -28,7 +28,7 @@ import {
     MovingAverageTooltip 
 } from 'react-financial-charts';
 
-const ResponsiveChartCanvas = withSize()(ChartCanvas);
+const ResponsiveChartCanvas = withSize({ style: { width: '100%', height: '100%' } })(ChartCanvas);
 
 // --- TYPES ---
 interface CryptoCoin {
@@ -336,7 +336,9 @@ const MarketPage: React.FC = () => {
         setOrderSubmitting(true);
 
         try {
-            const response = await fetch('/api/orders', {
+            console.log('Placing order with details:', orderDetails);
+
+            const res = await safeFetch('/api/orders', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -345,14 +347,17 @@ const MarketPage: React.FC = () => {
                 body: JSON.stringify(orderDetails),
             });
 
+            console.log('safeFetch response:', { ok: res.ok, status: res.status, error: res.error, dataType: typeof res.data, data: res.data });
+
             let result: OrderResponse | any = null;
             try {
-                result = await response.json();
+                result = res.data;
+                console.log('Parsed result:', result);
             } catch (e) {
                 result = null;
             }
 
-            if (response.ok && result && result.success) {
+            if (res.ok && result && result.success) {
                 setOrderStatus({ show: true, success: true, message: result.message || 'Order placed successfully!' });
                 // Optionally, refresh balance or order history here
                 try {
@@ -364,7 +369,7 @@ const MarketPage: React.FC = () => {
                     // silent
                 }
             } else {
-                const details = result?.error || result?.message || JSON.stringify(result) || `Status ${response.status}`;
+                const details = res.error || result?.error || result?.message || JSON.stringify(result) || `Status ${res.status}`;
                 setOrderStatus({ show: true, success: false, message: `Failed to place order: ${details}` });
             }
         } catch (error: any) {
@@ -603,7 +608,8 @@ const MarketPage: React.FC = () => {
                       {/* Main Action */}
                       <motion.button
                         whileTap={{ scale: 0.98 }}
-                        disabled={orderSubmitting || amount <= 0 || (orderType === 'LIMIT' && limitPrice <= 0) || marginUsed > balance}
+                         onClick={handlePlaceOrder}
+                        disabled={orderSubmitting || amount <= 0 || (orderType === 'LIMIT' && limitPrice <= 0) || (tradeType === 'BUY' && marginUsed > balance)}
                         className={`w-full py-3.5 rounded font-bold text-sm transition-all relative overflow-hidden ${
                           tradeType === 'BUY'
                             ? 'bg-[#02C076] hover:bg-[#03D885] text-white shadow-lg shadow-green-900/10'
@@ -615,7 +621,7 @@ const MarketPage: React.FC = () => {
 
                       {/* Error Message */}
                       <AnimatePresence>
-                        {marginUsed > balance && (
+                        {tradeType === 'BUY' && marginUsed > balance && (
                           <motion.p
                             initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                             className="text-center text-xs md:text-[11px] text-yellow-600 dark:text-[#F0B90B] font-medium"

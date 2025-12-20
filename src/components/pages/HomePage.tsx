@@ -240,38 +240,53 @@ export default function App() {
     const prevCoins = usePrevious(coins);
 
     // Fetch portfolio data
-    useEffect(() => {
-        const fetchPortfolio = async () => {
-            if (!isAuthenticated || !user) {
-                setPortfolioLoading(false);
-                return;
-            }
+    const fetchPortfolio = useCallback(async () => {
+        if (!isAuthenticated || !user) {
+            setPortfolioLoading(false);
+            return;
+        }
 
-                try {
-                    const token = localStorage.getItem('accessToken');
-                    if (!token) {
-                        setPortfolioLoading(false);
-                        return;
-                    }
-
-
-                    const res = await safeFetch('/api/portfolio', { headers: { 'Authorization': `Bearer ${token}` } }, 2, 700);
-                    if (res.ok) {
-                        setPortfolio(res.data);
-                    } else {
-                        console.error('Home fetchPortfolio error:', res.error, 'status:', res.status);
-                    }
-                } catch (error: any) {
-                    console.error('Error fetching portfolio:', error);
-                } finally {
+            try {
+                const token = localStorage.getItem('accessToken');
+                if (!token) {
                     setPortfolioLoading(false);
+                    return;
                 }
-        };
 
+
+                const res = await safeFetch('/api/portfolio', { headers: { 'Authorization': `Bearer ${token}` } }, 2, 700);
+                if (res.ok) {
+                    setPortfolio(res.data);
+                } else {
+                    console.error('Home fetchPortfolio error:', res.error, 'status:', res.status);
+                }
+            } catch (error: any) {
+                console.error('Error fetching portfolio:', error);
+            } finally {
+                setPortfolioLoading(false);
+            }
+    }, [isAuthenticated, user]);
+
+    useEffect(() => {
         fetchPortfolio();
         const interval = setInterval(fetchPortfolio, 30000);
         return () => clearInterval(interval);
-    }, [isAuthenticated, user]);
+    }, [fetchPortfolio]);
+
+    // Listen for portfolio updates triggered elsewhere in the app
+    useEffect(() => {
+        const onPortfolioUpdated = () => {
+            fetchPortfolio();
+        };
+        if (typeof window !== 'undefined' && window.addEventListener) {
+            window.addEventListener('portfolio:updated', onPortfolioUpdated);
+        }
+        return () => {
+            if (typeof window !== 'undefined' && window.removeEventListener) {
+                window.removeEventListener('portfolio:updated', onPortfolioUpdated as EventListener);
+            }
+        };
+    }, [fetchPortfolio]);
 
     // Fetch initial crypto data
     useEffect(() => {

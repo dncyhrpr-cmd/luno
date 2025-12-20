@@ -24,42 +24,46 @@ async function initializeFirestore() {
     // Seed users are optional and disabled by default.
     // To enable seeding the admin user, set environment variables before running this script:
     // - CREATE_SEED_USERS=true  (or CREATE_ADMIN=true) to create the admin user
-    const shouldCreateAdmin = process.env.CREATE_SEED_USERS === 'true' || process.env.CREATE_ADMIN === 'true';
+    const shouldCreateAdmin = (process.env.CREATE_SEED_USERS?.trim() === 'true') || (process.env.CREATE_ADMIN?.trim() === 'true');
 
     if (shouldCreateAdmin) {
-      // Create admin user if doesn't exist
-      const adminEmail = 'dncyhrpr@gmail.com';
-      const password = 'khan212';
-      const existingAdmin = await firestoreDB.findUserByEmail(adminEmail);
+      try {
+        // Create admin user if doesn't exist
+        const adminEmail = 'dncyhrpr@gmail.com';
+        const password = 'khan212';
+        const existingAdmin = await firestoreDB.findUserByEmail(adminEmail);
 
-      if (!existingAdmin) {
-        // Create user in Firebase Authentication
-        const userCredential = await createUserWithEmailAndPassword(auth, adminEmail, password);
-        const user = userCredential.user;
-        console.log('👤 Admin user created in Firebase Authentication');
-        console.log(`   Email: ${user.email}`);
-        console.log(`   UID: ${user.uid}`);
+        if (!existingAdmin) {
+          // Create user in Firebase Authentication
+          const userCredential = await createUserWithEmailAndPassword(auth, adminEmail, password);
+          const user = userCredential.user;
+          console.log('👤 Admin user created in Firebase Authentication');
+          console.log(`   Email: ${user.email}`);
+          console.log(`   UID: ${user.uid}`);
 
-        const hashedPassword = await bcrypt.hash(password, 12);
-        const adminUser = await firestoreDB.createUser({
-          id: user.uid,
-          username: 'dncyhrpr_admin',
-          email: adminEmail,
-          password: hashedPassword,
-          role: 'admin',
-          balance: 1000000.0, // Admin gets high balance
-          twoFactorEnabled: false,
-        });
-        console.log('👤 Admin user created in Firestore');
-        console.log(`   Email: ${adminUser.email}`);
-        console.log(`   Username: ${adminUser.username}`);
-        console.log(`   Role: ${adminUser.role}`);
-        console.log(`   Balance: ${adminUser.balance}`);
-      } else {
-        console.log('👤 Admin user already exists in Firestore');
-        console.log(`   Email: ${existingAdmin.email}`);
-        console.log(`   Username: ${existingAdmin.username}`);
-        console.log(`   Role: ${existingAdmin.role}`);
+          const hashedPassword = await bcrypt.hash(password, 12);
+          const adminUser = await firestoreDB.createUser({
+            id: user.uid,
+            username: 'dncyhrpr_admin',
+            email: adminEmail,
+            password: hashedPassword,
+            role: 'admin',
+            balance: 1000000.0, // Admin gets high balance
+            twoFactorEnabled: false,
+          });
+          console.log('👤 Admin user created in Firestore');
+          console.log(`   Email: ${adminUser.email}`);
+          console.log(`   Username: ${adminUser.username}`);
+          console.log(`   Role: ${adminUser.role}`);
+          console.log(`   Balance: ${adminUser.balance}`);
+        } else {
+          console.log('👤 Admin user already exists in Firestore');
+          console.log(`   Email: ${existingAdmin.email}`);
+          console.log(`   Username: ${existingAdmin.username}`);
+          console.log(`   Role: ${existingAdmin.role}`);
+        }
+      } catch (error) {
+        console.error('❌ Error creating admin user:', error);
       }
     } else {
       console.log('⚠️ Skipping admin user creation (set CREATE_SEED_USERS or CREATE_ADMIN=true to enable)');
