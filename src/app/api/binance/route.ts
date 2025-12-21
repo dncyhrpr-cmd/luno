@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-function generateSyntheticKlines(symbol: string, interval: string, limit: number): any[] {
+function generateSyntheticKlines(symbol: string, interval: string, limit: number, anchorPrice: number = 0): any[] {
     const now = Date.now();
     const intervalMs: Record<string, number> = {
         '15m': 15 * 60 * 1000,
@@ -12,23 +12,52 @@ function generateSyntheticKlines(symbol: string, interval: string, limit: number
     const ms = intervalMs[interval] || 60 * 60 * 1000;
     const klines = [];
     
-    let basePrice = 50000;
-    if (symbol.includes('ETH')) basePrice = 3000;
+    let basePrice = 97000; // Updated approx prices Dec 2025
+    if (symbol.includes('ETH')) basePrice = 2700;
     if (symbol.includes('SOL')) basePrice = 150;
-    if (symbol.includes('BNB')) basePrice = 600;
+    if (symbol.includes('BNB')) basePrice = 630;
+    if (symbol.includes('ADA')) basePrice = 0.75;
+    if (symbol.includes('DOGE')) basePrice = 0.25;
+    if (symbol.includes('XRP')) basePrice = 1.50;
+    if (symbol.includes('LTC')) basePrice = 85;
+    if (symbol.includes('MATIC')) basePrice = 0.40;
+    if (symbol.includes('LINK')) basePrice = 15.0;
+
+    // If anchorPrice is provided, use it as the starting point for the LATEST candle
+    // and generate backwards.
+    let currentSimPrice = anchorPrice > 0 ? anchorPrice : basePrice;
     
-    for (let i = limit - 1; i >= 0; i--) {
+    for (let i = 0; i < limit; i++) {
         const time = now - i * ms;
-        const volatility = 0.02;
-        const change = (Math.random() - 0.5) * volatility;
-        const open = basePrice * (1 + change);
-        const close = open * (1 + (Math.random() - 0.5) * volatility);
-        const high = Math.max(open, close) * (1 + Math.random() * 0.01);
-        const low = Math.min(open, close) * (1 - Math.random() * 0.01);
-        const volume = Math.random() * 1000000;
+        const volatility = 0.015;
         
-        klines.push([time, open.toFixed(2), high.toFixed(2), low.toFixed(2), close.toFixed(2), volume.toFixed(0)]);
-        basePrice = close;
+        // We are going backwards in time.
+        // currentSimPrice is the CLOSE of the current candle (time i).
+        // We need to generate OPEN, HIGH, LOW.
+        // And determine the CLOSE of the PREVIOUS candle (time i+1), which is roughly the OPEN of this candle.
+        
+        const change = (Math.random() - 0.5) * volatility;
+        const close = currentSimPrice;
+        // open = close / (1 + change) approx
+        const open = parseFloat((close / (1 + change)).toFixed(8));
+        
+        const high = parseFloat((Math.max(open, close) * (1 + Math.random() * 0.005)).toFixed(8));
+        const low = parseFloat((Math.min(open, close) * (1 - Math.random() * 0.005)).toFixed(8));
+        const volume = parseFloat((Math.random() * 500000).toFixed(2));
+        
+        // Unshift to add to the beginning of the array (oldest first)
+        klines.unshift({
+            date: time,
+            open,
+            high,
+            low,
+            close,
+            volume
+        });
+        
+        // The OPEN of this candle becomes the CLOSE of the previous candle (in time)
+        // So for the next iteration (i+1, which is older), currentSimPrice = open
+        currentSimPrice = open;
     }
     
     return klines;
@@ -70,30 +99,57 @@ export async function GET(request: NextRequest) {
                 return NextResponse.json({ error: 'No data available from Binance' }, { status: 404 });
             }
             
-            const formattedKlines = klines.map((k: any) => ({
-                date: k[0],
-                open: k[1],
-                high: k[2],
-                low: k[3],
-                close: k[4],
-                volume: k[5]
-            }));
+            const formattedKlines = klines.map((k: any) => {
+                const date = typeof k[0] === 'number' ? k[0] : parseInt(k[0]);
+                const open = typeof k[1] === 'number' ? k[1] : parseFloat(k[1]);
+                const high = typeof k[2] === 'number' ? k[2] : parseFloat(k[2]);
+                const low = typeof k[3] === 'number' ? k[3] : parseFloat(k[3]);
+                const close = typeof k[4] === 'number' ? k[4] : parseFloat(k[4]);
+                const volume = typeof k[5] === 'number' ? k[5] : parseFloat(k[5]);
+                
+                return {
+                    date,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume
+                };
+            });
+            console.log(`[Binance API] Successfully fetched ${formattedKlines.length} klines for ${symbol}`);
             return NextResponse.json(formattedKlines);
         } catch (error: any) {
             const errorMessage = error?.message || String(error);
             console.error(`[Binance API] Error fetching klines for ${symbol}:`, errorMessage);
             
             console.log(`[Binance API] Falling back to synthetic data for ${symbol}`);
-            const syntheticKlines = generateSyntheticKlines(symbol, interval, limit);
-            const formattedKlines = syntheticKlines.map((k: any) => ({
-                date: k[0],
-                open: k[1],
-                high: k[2],
-                low: k[3],
-                close: k[4],
-                volume: k[5]
-            }));
-            return NextResponse.json(formattedKlines);
+            
+            // Try to fetch current price to anchor synthetic data
+            let currentPrice = 0;
+            try {
+                const priceController = new AbortController();
+                const priceTimeout = setTimeout(() => priceController.abort(), 2000);
+                const priceRes = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, {
+                    signal: priceController.signal
+                });
+                clearTimeout(priceTimeout);
+                if (priceRes.ok) {
+                    const priceData = await priceRes.json();
+                    currentPrice = parseFloat(priceData.price);
+                    console.log(`[Binance API] Fetched current price for synthetic anchor: ${currentPrice}`);
+                }
+            } catch (e) {
+                console.log('[Binance API] Could not fetch current price for anchor, using defaults');
+            }
+
+            const syntheticKlines = generateSyntheticKlines(symbol, interval, limit, currentPrice);
+            console.log(`[Binance API] Generated ${syntheticKlines.length} synthetic klines for ${symbol}`);
+            
+            return NextResponse.json(syntheticKlines, {
+                headers: {
+                    'X-Luno-Data-Source': 'synthetic'
+                }
+            });
         }
     }
 

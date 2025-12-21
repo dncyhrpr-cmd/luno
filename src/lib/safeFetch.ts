@@ -3,6 +3,7 @@ export interface SafeFetchResult<T = any> {
   status?: number;
   data?: T;
   error?: string;
+  headers?: Headers;
 }
 
 /**
@@ -32,10 +33,10 @@ export async function safeFetch<T = any>(input: RequestInfo, init?: RequestInit,
 
       if (!resp.ok) {
         const details = body && typeof body === 'object' ? (body.details || body.error || body.message || JSON.stringify(body)) : body;
-        return { ok: false, status: resp.status, error: details ? String(details) : `HTTP ${resp.status}` };
+        return { ok: false, status: resp.status, error: details ? String(details) : `HTTP ${resp.status}`, headers: resp.headers };
       }
 
-      return { ok: true, status: resp.status, data: body };
+      return { ok: true, status: resp.status, data: body, headers: resp.headers };
     } catch (err: any) {
       // Network-level error, often TypeError: Failed to fetch
       const message = String(err || '');

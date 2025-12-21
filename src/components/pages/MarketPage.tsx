@@ -105,6 +105,7 @@ const MarketPage: React.FC = () => {
     const [timeframe, setTimeframe] = useState<string>('1h');
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [dataFetchError, setDataFetchError] = useState<string | null>(null);
+    const [isSyntheticData, setIsSyntheticData] = useState<boolean>(false);
     const [balance, setBalance] = useState<number>(0);
     const [orderStatus, setOrderStatus] = useState<{ show: boolean; success: boolean; message: string }>({
         show: false,
@@ -121,7 +122,29 @@ const MarketPage: React.FC = () => {
             setPriceChange(priceUpdate.change);
 
             setChartHistory(prevHistory => {
-                const newHistory = [...prevHistory];
+                let currentHistory = prevHistory;
+
+                // If data is synthetic and misaligned, align it to the real price
+                if (isSyntheticData) {
+                    const lastCandle = currentHistory[currentHistory.length - 1];
+                    // Avoid division by zero
+                    if (lastCandle.close > 0) {
+                        const ratio = priceUpdate.price / lastCandle.close;
+                        // If difference is > 0.5%, align the entire history
+                        if (Math.abs(1 - ratio) > 0.005) {
+                            console.log(`[MarketPage] Aligning synthetic data to real price ${priceUpdate.price} (ratio: ${ratio})`);
+                            currentHistory = currentHistory.map(c => ({
+                                ...c,
+                                open: c.open * ratio,
+                                high: c.high * ratio,
+                                low: c.low * ratio,
+                                close: c.close * ratio
+                            }));
+                        }
+                    }
+                }
+
+                const newHistory = [...currentHistory];
                 const lastCandle = newHistory[newHistory.length - 1];
 
                 const newCandle = {
@@ -135,8 +158,12 @@ const MarketPage: React.FC = () => {
                 newHistory[newHistory.length - 1] = newCandle;
                 return newHistory;
             });
+
+            if (isSyntheticData) {
+                setIsSyntheticData(false);
+            }
         }
-    }, [prices, selectedCoin, chartHistory.length]);
+    }, [prices, selectedCoin, chartHistory.length, isSyntheticData]);
 
 
     // Fetch user balance
@@ -244,6 +271,13 @@ const MarketPage: React.FC = () => {
                         throw new Error(res.error || `API error ${res.status}`);
                     }
 
+                    // Check if data is synthetic
+                    const isSynthetic = res.headers?.get('X-Luno-Data-Source') === 'synthetic';
+                    setIsSyntheticData(isSynthetic);
+                    if (isSynthetic) {
+                        console.log('Using synthetic data for chart');
+                    }
+
                     const klines = res.data;
                 // If server returned an error object, klines may not be an array.
                 if (!Array.isArray(klines) || klines.length === 0) {
@@ -255,20 +289,44 @@ const MarketPage: React.FC = () => {
                     return;
                 }
 
-                const parsed: KlineData[] = klines.map((k: any) => ({
-                    date: new Date(k.date),
-                    open: Number(k.open),
-                    high: Number(k.high),
-                    low: Number(k.low),
-                    close: Number(k.close),
-                    volume: Number(k.volume)
-                }));
+                const parsed: KlineData[] = klines.map((k: any) => {
+                    const dateValue = typeof k.date === 'number' ? k.date : parseInt(k.date);
+                    const parsed = {
+                        date: new Date(dateValue),
+                        open: Number(k.open),
+                        high: Number(k.high),
+                        low: Number(k.low),
+                        close: Number(k.close),
+                        volume: Number(k.volume)
+                    };
+                    
+                    if (isNaN(parsed.date.getTime())) {
+                        console.warn('Invalid date in kline data:', k);
+                        return null; // Filter out invalid dates
+                    }
 
+                    if (isNaN(parsed.open) || isNaN(parsed.high) || isNaN(parsed.low) || isNaN(parsed.close)) {
+                        console.warn('Invalid kline data:', k, 'parsed:', parsed);
+                    }
+                    
+                    return parsed;
+                }).filter((k): k is KlineData => k !== null);
+
+                if (parsed.length === 0) {
+                    setDataFetchError('No valid kline data received');
+                    setChartHistory([]);
+                    setIsLoading(false);
+                    return;
+                }
+
+                console.log(`Parsed ${parsed.length} klines, first:`, parsed[0], 'last:', parsed[parsed.length - 1]);
                 setChartHistory(parsed);
                 if (parsed.length > 0) {
                     const latestPrice = parsed[parsed.length - 1].close;
-                    setCurrentPrice(latestPrice);
-                    setLimitPrice(parseFloat(latestPrice.toFixed(2)));
+                    if (!isNaN(latestPrice)) {
+                        setCurrentPrice(latestPrice);
+                        setLimitPrice(parseFloat(latestPrice.toFixed(2)));
+                    }
                 }
                 
             } catch (error: any) {
