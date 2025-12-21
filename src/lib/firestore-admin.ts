@@ -10,22 +10,36 @@ function initializeFirebaseAdmin() {
     try {
         let serviceAccount: ServiceAccount | null = null;
 
-        // Try to load from JSON file first
-        const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || 'serviceAccountKey.json';
-        try {
-            const fs = require('fs');
-            const path = require('path');
-            const filePath = path.resolve(process.cwd(), serviceAccountPath);
-            if (fs.existsSync(filePath)) {
-                const serviceAccountJson = fs.readFileSync(filePath, 'utf8');
+        // Try to load from environment variable first (for production)
+        const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+        if (serviceAccountJson && serviceAccountJson.trim() !== '' && !serviceAccountJson.includes('/') && !serviceAccountJson.includes('\\')) {
+            // If it's not a file path, treat it as JSON string
+            try {
                 serviceAccount = JSON.parse(serviceAccountJson);
-                console.log('Loaded Firebase service account from JSON file.');
+                console.log('Loaded Firebase service account from environment variable.');
+            } catch (parseError) {
+                console.warn('Could not parse FIREBASE_SERVICE_ACCOUNT_JSON as JSON:', parseError);
             }
-        } catch (fileError) {
-            console.warn('Could not load Firebase service account from JSON file:', fileError);
         }
 
-        // If JSON file failed, try environment variables
+        // Try to load from JSON file (for local development)
+        if (!serviceAccount) {
+            const serviceAccountPath = serviceAccountJson || 'serviceAccountKey.json';
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                const filePath = path.resolve(process.cwd(), serviceAccountPath);
+                if (fs.existsSync(filePath)) {
+                    const serviceAccountFileJson = fs.readFileSync(filePath, 'utf8');
+                    serviceAccount = JSON.parse(serviceAccountFileJson);
+                    console.log('Loaded Firebase service account from JSON file.');
+                }
+            } catch (fileError) {
+                console.warn('Could not load Firebase service account from JSON file:', fileError);
+            }
+        }
+
+        // If JSON loading failed, try individual environment variables
         if (!serviceAccount) {
             if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_PRIVATE_KEY || !process.env.FIREBASE_CLIENT_EMAIL) {
                 console.warn('Firebase service account environment variables not found. Skipping Firebase initialization.');
