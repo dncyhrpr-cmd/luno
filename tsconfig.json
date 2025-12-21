@@ -33,14 +33,13 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
     "**/*.mts",
     "node_modules/@types/caseless",
     "node_modules/@types/estree",
     "node_modules/@types/json-schema",
     "node_modules/@types/request",
-    "node_modules/@types/tough-cookie"
+    "node_modules/@types/tough-cookie",
+    ".next/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

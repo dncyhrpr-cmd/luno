@@ -15,7 +15,7 @@ async function verifyToken(request: NextRequest) {
     // payload.userId is the canonical claim used by generateAuthTokens
     return { uid: payload.userId, raw: payload } as any;
   } catch (err: unknown) {
-    console.error('Access token verification failed:', err instanceof Error ? err.message : err);
+    console.error('Access token verification failed:', err instanceof Error ? err.message : String(err));
     return null;
   }
 }
