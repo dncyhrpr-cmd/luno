@@ -41,25 +41,36 @@ function initializeFirebaseAdmin() {
 
         // If JSON loading failed, try individual environment variables
         if (!serviceAccount) {
-            if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_PRIVATE_KEY || !process.env.FIREBASE_CLIENT_EMAIL) {
-                console.warn('Firebase service account environment variables not found. Skipping Firebase initialization.');
+            // Try to get individual Firebase environment variables
+            const projectId = process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+            const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+            const clientEmail = process.env.FIREBASE_CLIENT_EMAIL || process.env.NEXT_PUBLIC_FIREBASE_CLIENT_EMAIL;
+
+            if (!projectId || !privateKey || !clientEmail) {
+                console.warn('Firebase service account environment variables not found. Available env vars:', {
+                    hasProjectId: !!projectId,
+                    hasPrivateKey: !!privateKey,
+                    hasClientEmail: !!clientEmail
+                });
+                console.warn('Skipping Firebase initialization.');
                 return { db: null, auth: null };
             }
 
             // Create a service account object from environment variables
             serviceAccount = {
                 type: "service_account",
-                project_id: process.env.FIREBASE_PROJECT_ID,
-                private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-                private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-                client_email: process.env.FIREBASE_CLIENT_EMAIL,
-                client_id: process.env.FIREBASE_CLIENT_ID,
+                project_id: projectId,
+                private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID || "default",
+                private_key: privateKey.replace(/\\n/g, '\n'),
+                client_email: clientEmail,
+                client_id: process.env.FIREBASE_CLIENT_ID || "default",
                 auth_uri: "https://accounts.google.com/o/oauth2/auth",
                 token_uri: "https://oauth2.googleapis.com/token",
                 auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
-                client_x509_cert_url: `https://www.googleapis.com/robot/v1/metadata/x509/${process.env.FIREBASE_CLIENT_EMAIL}`
+                client_x509_cert_url: `https://www.googleapis.com/robot/v1/metadata/x509/${clientEmail}`,
+                universe_domain: "googleapis.com"
             } as ServiceAccount;
-            console.log('Using Firebase service account from environment variables.');
+            console.log('Using Firebase service account from individual environment variables.');
         }
 
         if (!admin.apps.length) {
