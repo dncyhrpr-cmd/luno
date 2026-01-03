@@ -12,7 +12,43 @@ const inter = Inter({
 // Metadata for SEO and application title
 export const metadata = {
     title: 'Luno - Crypto Trading Platform',
-    description: 'A modern, real-time cryptocurrency trading platform built with Next.js and Tailwind CSS.',
+    description: 'A modern, real-time cryptocurrency trading platform built with Next.js and Tailwind CSS. Trade crypto with live charts, binary options, and advanced analytics.',
+    keywords: ['cryptocurrency', 'crypto trading', 'bitcoin', 'ethereum', 'trading platform', 'real-time charts', 'binary options'],
+    authors: [{ name: 'Luno Team' }],
+    openGraph: {
+        title: 'Luno - Crypto Trading Platform',
+        description: 'Trade cryptocurrencies with real-time data, advanced charts, and binary options on Luno.',
+        url: 'https://luno-trading.com',
+        siteName: 'Luno',
+        images: [
+            {
+                url: 'https://luno-trading.com/luno-logo.svg',
+                width: 1200,
+                height: 630,
+                alt: 'Luno Crypto Trading Platform',
+            },
+        ],
+        locale: 'en_US',
+        type: 'website',
+    },
+    twitter: {
+        card: 'summary_large_image',
+        title: 'Luno - Crypto Trading Platform',
+        description: 'Trade cryptocurrencies with real-time data, advanced charts, and binary options on Luno.',
+        images: ['https://luno-trading.com/luno-logo.svg'],
+        creator: '@luno_trading',
+    },
+    robots: {
+        index: true,
+        follow: true,
+        googleBot: {
+            index: true,
+            follow: true,
+            'max-video-preview': -1,
+            'max-image-preview': 'large',
+            'max-snippet': -1,
+        },
+    },
 };
 
 export default function RootLayout({

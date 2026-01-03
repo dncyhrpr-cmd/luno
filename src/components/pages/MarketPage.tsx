@@ -98,6 +98,18 @@ const MarketPage: React.FC = () => {
     const { selectedCoin, setSelectedCoin } = useCoin();
     const authFetch = useAuthFetch();
     const { balance, isLoading: balanceLoading, isAuthenticated, refreshBalance } = useBalance();
+
+    // SEO: Update page title and meta description
+    useEffect(() => {
+        document.title = selectedCoin ? `${selectedCoin.symbol}/USDT - Luno Crypto Trading` : 'Market - Luno Crypto Trading Platform';
+        const metaDescription = document.querySelector('meta[name="description"]');
+        if (metaDescription) {
+            metaDescription.setAttribute('content', selectedCoin
+                ? `Trade ${selectedCoin.name} (${selectedCoin.symbol}) with real-time charts and binary options on Luno.`
+                : 'Access real-time cryptocurrency market data, live charts, and trading tools on Luno.'
+            );
+        }
+    }, [selectedCoin]);
     const [chartHistory, setChartHistory] = useState<KlineData[]>([]);
     const coinSymbols = selectedCoin ? [selectedCoin.symbol] : [];
     const { prices, isConnected } = useBinanceWebSocket(coinSymbols);
