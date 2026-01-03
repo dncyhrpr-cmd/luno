@@ -37,7 +37,7 @@ const Page = () => {
   const renderPage = () => {
     switch (currentPage) {
       case 'Home':
-        return <HomePage />;
+        return <HomePage onNavigate={setCurrentPage} />;
       case 'Assets':
         return <AssetsPage user={user} />;
       case 'Market':
@@ -55,7 +55,7 @@ const Page = () => {
       case 'Signup':
         return <SignupPage />;
       default:
-        return <HomePage />;
+        return <HomePage onNavigate={setCurrentPage} />;
     }
   };
 

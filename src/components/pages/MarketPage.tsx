@@ -1,10 +1,13 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ArrowUp, ArrowDown, Wallet, Clock, TrendingUp, TrendingDown, Layers, Target, AlertCircle, CheckCircle } from 'lucide-react';
+import { ArrowUp, ArrowDown, Wallet, Clock, TrendingUp, TrendingDown, Layers, Target, AlertCircle, CheckCircle, X } from 'lucide-react';
 import { useBinanceWebSocket, PriceUpdate } from '../../hooks/useBinanceWebSocket';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuthFetch } from '../../lib/authFetch';
 import { safeFetch } from '../../lib/safeFetch';
+import { useBalance } from '@/hooks/useBalance';
+import { useCoin } from '@/context/CoinContext';
 
 // Import chart components
 import { 
@@ -35,6 +38,7 @@ interface CryptoCoin {
     id: string;
     name: string;
     symbol: string;
+    image?: string;
 }
 
 interface KlineData {
@@ -66,19 +70,18 @@ interface OrderResponse {
     error?: string;
 }
 
-// --- CONSTANTS ---
-const cryptoCoins: CryptoCoin[] = [
-    { id: 'btc', name: 'Bitcoin', symbol: 'BTC' },
-    { id: 'eth', name: 'Ethereum', symbol: 'ETH' },
-    { id: 'sol', name: 'Solana', symbol: 'SOL' },
-    { id: 'bnb', name: 'Binance Coin', symbol: 'BNB' },
-    { id: 'ada', name: 'Cardano', symbol: 'ADA' },
-    { id: 'doge', name: 'Dogecoin', symbol: 'DOGE' },
-    { id: 'xrp', name: 'Ripple', symbol: 'XRP' },
-    { id: 'ltc', name: 'Litecoin', symbol: 'LTC' },
-];
+type Direction = 'UP' | 'DOWN' | null;
 
-const coinSymbols = cryptoCoins.map(c => c.symbol);
+// --- CONSTANTS ---
+// Removed hardcoded coins
+
+const PERIODS = [
+  { time: 30, profit: 20 },
+  { time: 60, profit: 30 },
+  { time: 120, profit: 40 },
+  { time: 180, profit: 50 },
+  { time: 240, profit: 60 },
+];
 
 // --- COMPONENTS ---
 const Card: React.FC<CardProps> = React.memo(({ title, children, className = '' }) => (
@@ -92,30 +95,41 @@ Card.displayName = 'Card';
 
 // --- MAIN COMPONENT ---
 const MarketPage: React.FC = () => {
-    const [selectedCoin, setSelectedCoin] = useState<CryptoCoin>(cryptoCoins[0]);
+    const { selectedCoin, setSelectedCoin } = useCoin();
+    const authFetch = useAuthFetch();
+    const { balance, isLoading: balanceLoading, isAuthenticated, refreshBalance } = useBalance();
     const [chartHistory, setChartHistory] = useState<KlineData[]>([]);
+    const coinSymbols = selectedCoin ? [selectedCoin.symbol] : [];
     const { prices, isConnected } = useBinanceWebSocket(coinSymbols);
     const [currentPrice, setCurrentPrice] = useState<number>(0);
     const [priceChange, setPriceChange] = useState<number>(0);
-    const [tradeType, setTradeType] = useState<'BUY' | 'SELL'>('BUY');
-    const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET');
-    const [amount, setAmount] = useState<number>(0.01);
-    const [limitPrice, setLimitPrice] = useState<number>(0);
-    const [leverage, setLeverage] = useState<number>(1);
-    const [timeframe, setTimeframe] = useState<string>('1h');
+    const [timeframe, setTimeframe] = useState<string>('60s');
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [dataFetchError, setDataFetchError] = useState<string | null>(null);
     const [isSyntheticData, setIsSyntheticData] = useState<boolean>(false);
-    const [balance, setBalance] = useState<number>(0);
-    const [orderStatus, setOrderStatus] = useState<{ show: boolean; success: boolean; message: string }>({
-        show: false,
-        success: false,
-        message: ''
-    });
-    const [orderSubmitting, setOrderSubmitting] = useState<boolean>(false);
+    const [allCoins, setAllCoins] = useState<CryptoCoin[]>([]);
+    const [searchTerm, setSearchTerm] = useState<string>('');
+
+    // Binary options states
+    const [direction, setDirection] = useState<Direction>(null);
+    const [orderPeriod, setOrderPeriod] = useState<number | null>(null);
+    const [profitPercent, setProfitPercent] = useState(0);
+    const [binaryAmount, setBinaryAmount] = useState(0);
+    const [binarySubmitting, setBinarySubmitting] = useState(false);
+    const [binaryStatus, setBinaryStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [showConfirm, setShowConfirm] = useState(false);
+    const [chartHeight, setChartHeight] = useState(650); // default to lg
+    const [margin, setMargin] = useState({ left: 30, right: 40, top: 10, bottom: 30 });
+
+    const filteredCoins = useMemo(() => allCoins.filter(coin =>
+        coin.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        coin.symbol.toLowerCase().includes(searchTerm.toLowerCase())
+    ), [allCoins, searchTerm]);
 
     // Update chart with real-time data
     useEffect(() => {
+        if (!selectedCoin) return;
         const priceUpdate = prices.get(selectedCoin.symbol);
         if (priceUpdate && chartHistory.length > 0) {
             setCurrentPrice(priceUpdate.price);
@@ -166,37 +180,51 @@ const MarketPage: React.FC = () => {
     }, [prices, selectedCoin, chartHistory.length, isSyntheticData]);
 
 
-    // Fetch user balance
+    // Balance is now fetched by useBalance hook with real-time updates
+
+    // Fetch all coins
     useEffect(() => {
-        const fetchBalance = async () => {
+        const fetchCoins = async () => {
             try {
-                const token = localStorage.getItem('accessToken');
-                if (!token) return;
-
-                const response = await fetch('/api/portfolio', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-
+                const response = await fetch('/api/coins');
                 if (response.ok) {
                     const data = await response.json();
-                    setBalance(data.balance || 0);
+                    setAllCoins(data.coins);
+                    // Set default selected coin if none is selected
+                    if (!selectedCoin && data.coins.length > 0) {
+                        setSelectedCoin(data.coins[0]);
+                    }
                 }
-            } catch (error: any) {
-                console.error('Failed to fetch balance:', error);
+            } catch (error) {
+                console.error('Failed to fetch coins:', error);
+            }
+        };
+        fetchCoins();
+    }, [selectedCoin]);
+
+    // Responsive chart sizing
+    useEffect(() => {
+        const updateSizes = () => {
+            if (typeof window !== 'undefined') {
+                if (window.innerWidth < 768) {
+                    setChartHeight(300);
+                    setMargin({ left: 20, right: 20, top: 10, bottom: 20 });
+                } else if (window.innerWidth < 1024) {
+                    setChartHeight(400);
+                    setMargin({ left: 25, right: 30, top: 10, bottom: 25 });
+                } else {
+                    setChartHeight(650);
+                    setMargin({ left: 30, right: 40, top: 10, bottom: 30 });
+                }
             }
         };
 
-        fetchBalance();
-        const interval = setInterval(fetchBalance, 30000);
-        return () => clearInterval(interval);
+        updateSizes();
+        window.addEventListener('resize', updateSizes);
+        return () => window.removeEventListener('resize', updateSizes);
     }, []);
 
-    // Initialize limit price when price changes
-    useEffect(() => {
-        if (currentPrice > 0) {
-            setLimitPrice(parseFloat(currentPrice.toFixed(2)));
-        }
-    }, [currentPrice, selectedCoin]);
+
 
     // --- TECHNICAL INDICATORS ---
     const ema50 = useMemo(() => ema().options({ windowSize: 50 }).merge((d: any, c: any) => { d.ema50 = c; }).accessor((d: any) => d.ema50).stroke('#fa5252'), []);
@@ -215,8 +243,6 @@ const MarketPage: React.FC = () => {
     }, [chartHistory, ema50, ema20, rsiCalculator, macdCalculator]);
 
     // --- CHART CONFIGURATION ---
-    const margin = { left: 30, right: 40, top: 10, bottom: 30 };
-    const chartHeight = 500;
     const xScaleProvider = useMemo(() => discontinuousTimeScaleProviderBuilder().inputDateAccessor((d: any) => d.date), []);
     const { data, xScale, xAccessor, displayXAccessor } = xScaleProvider(calculatedData);
     const xExtents = useMemo(() => {
@@ -238,10 +264,11 @@ const MarketPage: React.FC = () => {
 
     // Fetch historical data
     useEffect(() => {
+        if (!selectedCoin) return;
         const fetchHistoricalData = async () => {
             setIsLoading(true);
             setDataFetchError(null);
-            
+
             const symbol = selectedCoin.symbol.toUpperCase() + 'USDT';
 
             // Normalize timeframe string and map to Binance interval + sensible limits.
@@ -250,12 +277,11 @@ const MarketPage: React.FC = () => {
             const tfKey = rawTf.replace(/\s+/g, '');
 
             const timeframeMap: Record<string, { interval: string; limit: number }> = {
-                '15m': { interval: '15m', limit: 200 },
-                '15min': { interval: '15m', limit: 200 },
-                '1h': { interval: '1h', limit: 200 },
-                '1hour': { interval: '1h', limit: 200 },
-                '4h': { interval: '4h', limit: 200 },
-                '4hour': { interval: '4h', limit: 200 },
+                '30s': { interval: '1m', limit: 200 },
+                '60s': { interval: '1m', limit: 200 },
+                '120s': { interval: '1m', limit: 200 },
+                '180s': { interval: '1m', limit: 200 },
+                '240s': { interval: '1m', limit: 200 },
             };
 
             const { interval, limit } = timeframeMap[tfKey] || { interval: '1h', limit: 200 };
@@ -265,7 +291,7 @@ const MarketPage: React.FC = () => {
 
             try {
                     // Use safeFetch to handle transient network errors and provide normalized results
-                    const res = await (await import('../../lib/safeFetch')).safeFetch(url, undefined, 2, 800);
+                    const res = await safeFetch(url, undefined, 2, 800);
                     if (!res.ok) {
                         console.error('Historical API error (safeFetch):', res.error, 'status:', res.status);
                         throw new Error(res.error || `API error ${res.status}`);
@@ -325,7 +351,6 @@ const MarketPage: React.FC = () => {
                     const latestPrice = parsed[parsed.length - 1].close;
                     if (!isNaN(latestPrice)) {
                         setCurrentPrice(latestPrice);
-                        setLimitPrice(parseFloat(latestPrice.toFixed(2)));
                     }
                 }
                 
@@ -341,108 +366,71 @@ const MarketPage: React.FC = () => {
         fetchHistoricalData();
     }, [selectedCoin, timeframe]);
 
-    const handlePlaceOrder = useCallback(async () => {
-        // Basic validations
-        // For BUY orders we require a positive balance; SELL orders depend on asset holdings (handled server-side or in a later client check)
-        if (tradeType === 'BUY' && balance <= 0) {
-            setOrderStatus({ show: true, success: false, message: 'Insufficient balance to place buy order.' });
-            return;
+
+
+
+
+    // Binary order submission
+    async function submitOrderBinary() {
+        if (!canSubmitBinary || !selectedCoin) return;
+
+        setBinarySubmitting(true);
+        setBinaryStatus(null);
+
+        const res = await authFetch('/api/orders', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                type: direction === 'UP' ? 'buy' : 'sell',
+                symbol: `${selectedCoin.symbol}USDT`,
+                quantity: binaryAmount,
+                price: currentPrice,
+                orderType: 'binary',
+                leverage: 1, // or whatever
+                // additional binary fields
+                direction,
+                period: orderPeriod,
+                profitPercent,
+                binaryAmount,
+            }),
+        });
+
+        if (res.ok) {
+            setBinaryStatus({ ok: true, msg: 'Order placed successfully' });
+            setBinaryAmount(0);
+            setDirection(null);
+            setOrderPeriod(null);
+            // Refresh balance immediately after order placement
+            refreshBalance();
+            setIsModalOpen(false);
+            setShowConfirm(false);
+        } else {
+            setBinaryStatus({ ok: false, msg: res.error || 'Order failed' });
         }
 
-        if (Number.isNaN(amount) || amount <= 0) {
-            setOrderStatus({ show: true, success: false, message: 'Enter a valid amount greater than 0.' });
-            return;
-        }
+        setBinarySubmitting(false);
+    }
 
-        if (orderType === 'LIMIT' && (Number.isNaN(limitPrice) || limitPrice <= 0)) {
-            setOrderStatus({ show: true, success: false, message: 'Enter a valid limit price greater than 0 for limit orders.' });
-            return;
-        }
 
-        const token = localStorage.getItem('accessToken');
-        if (!token) {
-            setOrderStatus({ show: true, success: false, message: 'You must be logged in to trade.' });
-            return;
-        }
 
-        // Compute execution price and margin
-        const execPrice = orderType === 'MARKET' ? currentPrice : limitPrice;
-        if (!execPrice || execPrice <= 0) {
-            setOrderStatus({ show: true, success: false, message: 'Execution price is invalid.' });
-            return;
-        }
-
-        const estimatedMargin = (amount * execPrice) / Math.max(1, leverage);
-        // Margin requirement applies to BUY orders. For SELL orders, margin comes from existing assets.
-        if (tradeType === 'BUY' && estimatedMargin > balance) {
-            setOrderStatus({ show: true, success: false, message: 'Insufficient balance to cover margin for this buy order.' });
-            return;
-        }
-
-        const orderDetails = {
-            symbol: selectedCoin.symbol + 'USDT',
-            // Backend expects `type` to be 'BUY' or 'SELL'
-            type: tradeType,
-            // Preserve orderType (MARKET or LIMIT) as a separate field
-            orderType: orderType,
-            quantity: amount,
-            // Backend requires a price even for market orders (execution price)
-            price: execPrice,
-            leverage: leverage,
-        };
-
-        setOrderSubmitting(true);
-
-        try {
-            console.log('Placing order with details:', orderDetails);
-
-            const res = await safeFetch('/api/orders', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                },
-                body: JSON.stringify(orderDetails),
-            });
-
-            console.log('safeFetch response:', { ok: res.ok, status: res.status, error: res.error, dataType: typeof res.data, data: res.data });
-
-            let result: OrderResponse | any = null;
-            try {
-                result = res.data;
-                console.log('Parsed result:', result);
-            } catch (e) {
-                result = null;
-            }
-
-            if (res.ok && result && result.success) {
-                setOrderStatus({ show: true, success: true, message: result.message || 'Order placed successfully!' });
-                // Optionally, refresh balance or order history here
-                try {
-                    // Notify other parts of the app (AssetsPage) to refresh portfolio data
-                    if (typeof window !== 'undefined' && window.dispatchEvent) {
-                        window.dispatchEvent(new CustomEvent('portfolio:updated'));
-                    }
-                } catch (e) {
-                    // silent
-                }
-            } else {
-                const details = res.error || result?.error || result?.message || JSON.stringify(result) || `Status ${res.status}`;
-                setOrderStatus({ show: true, success: false, message: `Failed to place order: ${details}` });
-            }
-        } catch (error: any) {
-            console.error('Error placing order:', error);
-            setOrderStatus({ show: true, success: false, message: `An unexpected error occurred: ${String(error)}` });
-        } finally {
-            setOrderSubmitting(false);
-            setTimeout(() => setOrderStatus(prev => ({ ...prev, show: false })), 5000);
-        }
-    }, [balance, selectedCoin.symbol, orderType, tradeType, amount, limitPrice, leverage, currentPrice]);
+    // Binary calculations
+    const estimatedProfit = useMemo(() => (binaryAmount > 0 ? (binaryAmount * profitPercent) / 100 : 0), [binaryAmount, profitPercent]);
+    const canSubmitBinary = direction !== null && orderPeriod !== null && binaryAmount > 0 && binaryAmount <= balance;
 
     const isPositive = priceChange >= 0;
-    const executionPrice = orderType === 'MARKET' ? currentPrice : limitPrice;
-    const notionalValue = amount * executionPrice;
-    const marginUsed = notionalValue / leverage;
+
+    if (!selectedCoin) {
+        return (
+            <div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-gray-900">
+                <div className="text-center">
+                    <div className="w-16 h-16 mx-auto mb-4 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
+                    <p className="text-xl font-semibold text-indigo-600 dark:text-indigo-400">Loading Coins...</p>
+                </div>
+            </div>
+        );
+    }
 
     if (isLoading) {
         return (
@@ -458,12 +446,7 @@ const MarketPage: React.FC = () => {
     return (
         <div className="min-h-screen p-4 space-y-6 bg-gray-50 dark:bg-gray-900 md:p-8">
             {/* Status Messages */}
-            {orderStatus.show && (
-                <div className={`flex items-center p-4 rounded-lg shadow-lg ${orderStatus.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                    {orderStatus.success ? <CheckCircle className="w-5 h-5 mr-3" /> : <AlertCircle className="w-5 h-5 mr-3" />}
-                    <p className="font-medium">{orderStatus.message}</p>
-                </div>
-            )}
+
             {dataFetchError && (
                 <div className="flex items-center p-4 text-red-700 bg-red-100 border rounded-lg">
                     <AlertCircle className="w-5 h-5 mr-3" />
@@ -483,19 +466,13 @@ const MarketPage: React.FC = () => {
                     {/* Header */}
                     <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                         <div className="flex flex-wrap items-center gap-4">
-                            {cryptoCoins.map(coin => (
-                                <button key={coin.id} onClick={() => setSelectedCoin(coin)} className={`px-3 py-2 text-base md:text-sm font-medium rounded-full ${selectedCoin.id === coin.id ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                                    {coin.symbol}
-                                </button>
-                            ))}
-                             <div className="flex items-center gap-2">
-                                <Clock className="w-5 h-5 text-gray-500" />
-                                {['15m', '1h', '4h'].map(tf => (
-                                    <button key={tf} onClick={() => setTimeframe(tf)} className={`px-3 py-2 text-base md:text-sm font-medium rounded-full ${timeframe === tf ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                                        {tf}
-                                    </button>
-                                ))}
-                            </div>
+                            <input
+                                type="text"
+                                placeholder="Search coins..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
                         </div>
                         <div className="text-right">
                             <p className="text-3xl font-extrabold md:text-4xl dark:text-white">${currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
@@ -510,13 +487,13 @@ const MarketPage: React.FC = () => {
                         {chartHistory.length > 0 ? (
                             <ResponsiveChartCanvas
                                 margin={margin} data={data} xScale={xScale} xAccessor={xAccessor} displayXAccessor={displayXAccessor}
-                                xExtents={xExtents} ratio={1} seriesName={selectedCoin.symbol}
+                                xExtents={xExtents} ratio={1} seriesName={selectedCoin!.symbol}
                             >
                                 <Chart id={1} yExtents={(d: any) => [d.high, d.low]} height={chartHeight}>
                                     <XAxis axisAt="bottom" orient="bottom" />
                                     <YAxis axisAt="right" orient="right" tickFormat={priceDisplayFormat} />
                                     <MouseCoordinateY at="right" orient="right" displayFormat={priceDisplayFormat} />
-                                    <CandlestickSeries fill={(d: KlineData) => d.close >= d.open ? "#0ECB81" : "#F6465D"} stroke={(d: KlineData) => d.close >= d.open ? "#0ECB81" : "#F6465D"} wickStroke={(d: KlineData) => d.close >= d.open ? "#0ECB81" : "#F6465D"} />
+                                    <CandlestickSeries />
                                     <LineSeries yAccessor={ema20.accessor()} strokeStyle={ema20.stroke()} />
                                     <LineSeries yAccessor={ema50.accessor()} strokeStyle={ema50.stroke()} />
                                     <OHLCTooltip origin={[5, 15]} />
@@ -539,155 +516,193 @@ const MarketPage: React.FC = () => {
                     <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-[#2B2F36]">
                       <h2 className="text-base md:text-sm font-bold text-gray-900 dark:text-[#EAECEF] flex items-center gap-2">
                         <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                        Trade {selectedCoin.symbol}
+                        Trade {selectedCoin!.symbol}
                       </h2>
-                      <div className="flex gap-2">
-                        <span className="text-[10px] font-medium text-gray-500 dark:text-[#848E9C] bg-gray-100 dark:bg-[#2B2F36] px-2 py-0.5 rounded uppercase">Isolated</span>
-                        <span className="text-[10px] font-medium text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded uppercase">{leverage}x</span>
-                      </div>
+
                     </div>
 
                     <div className="p-4 space-y-5">
-                      {/* Trade Direction Toggle */}
-                      <div className="flex bg-gray-100 dark:bg-[#1E2329] p-1 rounded-lg">
-                        <button
-                          onClick={() => setTradeType('BUY')}
-                          className={`flex-1 py-2 text-xs font-bold rounded transition-all ${
-                            tradeType === 'BUY' ? 'bg-[#02C076] text-white shadow-sm' : 'text-gray-500 dark:text-[#848E9C] hover:text-white'
-                          }`}
+                      {/* Coin Selection */}
+                      <div className="space-y-2">
+                        <label className="text-xs md:text-[11px] text-gray-500 dark:text-[#848E9C] font-medium">Select Asset</label>
+                        <select
+                            value={selectedCoin.id}
+                            onChange={(e) => {
+                                const coin = allCoins.find(c => c.id === e.target.value);
+                                if (coin) setSelectedCoin(coin);
+                            }}
+                            className="w-full bg-gray-100 dark:bg-[#2B2F36] border border-transparent focus:border-blue-500 rounded p-3 md:p-2.5 text-base md:text-sm text-gray-900 dark:text-white outline-none transition-all"
                         >
-                          Buy
-                        </button>
-                        <button
-                          onClick={() => setTradeType('SELL')}
-                          className={`flex-1 py-2 text-xs font-bold rounded transition-all ${
-                            tradeType === 'SELL' ? 'bg-[#CF304A] text-white shadow-sm' : 'text-gray-500 dark:text-[#848E9C] hover:text-white'
-                          }`}
-                        >
-                          Sell
-                        </button>
+                            {filteredCoins.map(coin => (
+                                <option key={coin.id} value={coin.id}>{coin.name} ({coin.symbol})</option>
+                            ))}
+                        </select>
                       </div>
 
-                      {/* Execution Type */}
-                      <div className="flex gap-4">
-                        {['MARKET', 'LIMIT'].map((type) => (
-                          <button
-                            key={type}
-                            onClick={() => setOrderType(type as 'MARKET' | 'LIMIT')}
-                            className={`text-xs font-semibold pb-1 border-b-2 transition-all ${
-                              orderType === type ? 'border-blue-500 text-white' : 'border-transparent text-gray-500 dark:text-[#848E9C] hover:text-gray-900 dark:hover:text-[#EAECEF]'
-                            }`}
-                          >
-                            {type}
-                          </button>
-                        ))}
-                      </div>
+                      <div className="text-center">
+                <h1 className="text-lg font-bold">{selectedCoin?.symbol}/USDT</h1>
+                <p className="text-3xl font-extrabold">${currentPrice.toFixed(2)}</p>
+            </div>
 
-                      {/* Form Fields */}
-                      <div className="space-y-3">
-                        {/* Price Input (Only for Limit) */}
-                        <AnimatePresence mode="wait">
-                          {orderType === 'LIMIT' && (
-                            <motion.div
-                              initial={{ opacity: 0, y: -5 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -5 }}
-                              className="space-y-1.5"
+            <div className="flex gap-2">
+                <button
+                    onClick={() => { setDirection('UP'); setIsModalOpen(true); setShowConfirm(false); }}
+                    className="flex-1 py-4 rounded font-bold bg-[#2B2F36] text-gray-400 hover:bg-green-500 hover:text-white transition-colors"
+                >
+                    Buy Up
+                </button>
+                <button
+                    onClick={() => { setDirection('DOWN'); setIsModalOpen(true); setShowConfirm(false); }}
+                    className="flex-1 py-4 rounded font-bold bg-[#2B2F36] text-gray-400 hover:bg-red-500 hover:text-white transition-colors"
+                >
+                    Buy Down
+                </button>
+            </div>
+
+            <AnimatePresence>
+                {isModalOpen && (
+                    <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="mt-4 space-y-4"
+                    >
+                        <div className="flex justify-end">
+                            <button
+                                onClick={() => { setIsModalOpen(false); setDirection(null); setOrderPeriod(null); setBinaryAmount(0); setShowConfirm(false); setBinaryStatus(null); }}
+                                className="p-1 text-gray-400 hover:text-white"
                             >
-                              <label className="text-xs md:text-[11px] text-gray-500 dark:text-[#848E9C] font-medium">Price (USDT)</label>
-                              <div className="relative group">
-                                <input
-                                  type="number"
-                                  value={limitPrice}
-                                  onChange={(e) => setLimitPrice(parseFloat(e.target.value) || 0)}
-                                  className="w-full bg-gray-100 dark:bg-[#2B2F36] border border-transparent group-focus-within:border-blue-500 rounded p-3 md:p-2.5 text-base md:text-sm text-gray-900 dark:text-white outline-none transition-all font-mono"
-                                />
-                              </div>
-                            </motion.div>
-                          )}
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="bg-[#1E2329] p-3 rounded">
+                            <div className="text-sm text-gray-400">Available Balance</div>
+                            <div className="text-lg font-bold">${balance.toFixed(2)}</div>
+                        </div>
+
+                        <div>
+                            <div className="flex items-center gap-2 mb-2 text-xs text-gray-400">
+                                <Clock size={14} /> Select order period
+                            </div>
+                            <div className="grid grid-cols-5 gap-2">
+                                {PERIODS.map(p => (
+                                    <button
+                                        key={p.time}
+                                        onClick={() => {
+                                            setOrderPeriod(p.time);
+                                            setProfitPercent(p.profit);
+                                        }}
+                                        className={`py-2 text-xs rounded ${
+                                            orderPeriod === p.time
+                                                ? 'bg-blue-600'
+                                                : 'bg-[#2B2F36] text-gray-400'
+                                        }`}
+                                    >
+                                        {p.time}s
+                                        <div className="text-green-400">{p.profit}%</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="text-xs text-gray-400">Order Amount (USDT)</label>
+                            <input
+                                type="number"
+                                value={binaryAmount}
+                                onChange={e => setBinaryAmount(+e.target.value)}
+                                placeholder="Enter amount, e.g. 10 (min 1 USDT)"
+                                min="1"
+                                max={balance.toString()}
+                                step="0.01"
+                                className="w-full mt-1 bg-[#2B2F36] p-3 rounded outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+
+                        <div className="flex gap-1">
+                            {[25, 50, 75, 100].map(p => (
+                                <button
+                                    key={p}
+                                    onClick={() => setBinaryAmount((balance * p) / 100)}
+                                    className="flex-1 bg-[#2B2F36] py-2 rounded text-xs"
+                                >
+                                    {p}%
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="bg-[#1E2329] p-3 rounded text-xs space-y-1">
+                            <div className="flex justify-between">
+                                <span>Available</span>
+                                <span className={binaryAmount > balance ? 'text-red-500' : ''}>${balance.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Period</span>
+                                <span>{orderPeriod ?? '--'}s</span>
+                            </div>
+                            <div className="flex justify-between text-green-400">
+                                <span>Profit</span>
+                                <span>${estimatedProfit.toFixed(2)}</span>
+                            </div>
+                            {!isAuthenticated && (
+                                <div className="pt-2 mt-2 text-center border-t border-gray-600">
+                                    <p className="text-xs text-yellow-400">Please log in to see your balance and trade</p>
+                                </div>
+                            )}
+                            {binaryAmount > balance && (
+                                <div className="pt-2 mt-2 text-center border-t border-gray-600">
+                                    <p className="text-xs text-red-500">Insufficient balance for this amount</p>
+                                </div>
+                            )}
+                        </div>
+
+                        <button
+                            disabled={!canSubmitBinary || binarySubmitting}
+                            onClick={() => setShowConfirm(true)}
+                            className={`w-full py-3 rounded font-bold ${
+                                direction === 'UP' ? 'bg-green-500' : 'bg-red-500'
+                            } disabled:opacity-30`}
+                        >
+                            {binarySubmitting ? 'Processing...' : 'Submit Order'}
+                        </button>
+
+                        <AnimatePresence>
+                            {showConfirm && (
+                                <motion.div
+                                    initial={{ opacity: 0, scale: 0.9 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    exit={{ opacity: 0, scale: 0.9 }}
+                                    className="p-3 bg-yellow-100 rounded dark:bg-yellow-800"
+                                >
+                                    <p className="text-sm">Confirm order: {direction} ${binaryAmount} USDT for {orderPeriod}s period? Expected profit: ${estimatedProfit.toFixed(2)}</p>
+                                    <div className="flex gap-2 mt-2">
+                                        <button onClick={async () => { await submitOrderBinary(); setShowConfirm(false); }} className="flex-1 py-2 text-sm font-bold bg-green-500 rounded">Confirm</button>
+                                        <button onClick={() => setShowConfirm(false)} className="flex-1 py-2 text-sm font-bold bg-gray-500 rounded">Cancel</button>
+                                    </div>
+                                </motion.div>
+                            )}
                         </AnimatePresence>
 
-                        {/* Amount Input */}
-                        <div className="space-y-1.5">
-                          <label className="text-xs md:text-[11px] text-gray-500 dark:text-[#848E9C] font-medium flex justify-between">
-                            <span>Amount ({selectedCoin.symbol})</span>
-                            <span className="text-blue-500 cursor-pointer hover:underline">Max Use</span>
-                          </label>
-                          <div className="relative group">
-                            <input
-                              type="number"
-                              value={amount}
-                              onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
-                              className="w-full bg-gray-100 dark:bg-[#2B2F36] border border-transparent group-focus-within:border-blue-500 rounded p-3 md:p-2.5 text-base md:text-sm text-gray-900 dark:text-white outline-none transition-all font-mono placeholder:text-gray-400 dark:placeholder:text-[#474D57]"
-                              placeholder="0.00"
-                            />
-                          </div>
-                        </div>
+                        <AnimatePresence>
+                            {binaryStatus && (
+                                <motion.div
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className={`p-3 rounded text-center text-sm ${
+                                        binaryStatus.ok ? 'bg-green-500' : 'bg-red-500'
+                                    }`}
+                                >
+                                    {binaryStatus.msg}
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
-                        {/* Percentage Selectors */}
-                        <div className="flex justify-between gap-1">
-                          {[25, 50, 75, 100].map((pct) => (
-                            <button
-                              key={pct}
-                              className="flex-1 py-2 md:py-1 text-xs md:text-[10px] bg-gray-100 dark:bg-[#2B2F36] text-gray-500 dark:text-[#848E9C] rounded hover:bg-gray-200 dark:hover:bg-[#363A45] hover:text-gray-900 dark:hover:text-white transition-colors border border-gray-200 dark:border-[#363A45]"
-                            >
-                              {pct}%
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Leverage Slider */}
-                      <div className="pt-2 space-y-3">
-                        <div className="flex justify-between text-xs md:text-[11px] text-gray-500 dark:text-[#848E9C]">
-                          <span>Leverage Range</span>
-                          <span className="text-gray-900 dark:text-[#EAECEF] font-bold bg-gray-100 dark:bg-[#2B2F36] px-1.5 rounded">{leverage}x</span>
-                        </div>
-                        <input
-                          type="range" min="1" max="100" step="1"
-                          value={leverage}
-                          onChange={(e) => setLeverage(parseInt(e.target.value))}
-                          className="w-full h-1 bg-gray-200 dark:bg-[#2B2F36] rounded-lg appearance-none cursor-pointer accent-blue-500"
-                        />
-                      </div>
-
-                      {/* Info Summary Block */}
-                      <div className="bg-gray-100 dark:bg-[#1E2329] rounded-lg p-3 space-y-2 border border-gray-200 dark:border-[#2B2F36]">
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-gray-500 dark:text-[#848E9C]">Est. Margin</span>
-                          <span className="text-gray-900 dark:text-[#EAECEF] font-mono">${marginUsed.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                        </div>
-                        <div className="flex justify-between text-[11px]">
-                          <span className="text-gray-500 dark:text-[#848E9C]">Available</span>
-                          <span className="font-mono font-semibold text-gray-900 dark:text-white">${balance.toLocaleString()}</span>
-                        </div>
-                      </div>
-
-                      {/* Main Action */}
-                      <motion.button
-                        whileTap={{ scale: 0.98 }}
-                         onClick={handlePlaceOrder}
-                        disabled={orderSubmitting || amount <= 0 || (orderType === 'LIMIT' && limitPrice <= 0) || (tradeType === 'BUY' && marginUsed > balance)}
-                        className={`w-full py-3.5 rounded font-bold text-sm transition-all relative overflow-hidden ${
-                          tradeType === 'BUY'
-                            ? 'bg-[#02C076] hover:bg-[#03D885] text-white shadow-lg shadow-green-900/10'
-                            : 'bg-[#CF304A] hover:bg-[#E03551] text-white shadow-lg shadow-red-900/10'
-                        } disabled:opacity-30 disabled:cursor-not-allowed`}
-                      >
-                        {orderSubmitting ? 'Executing Order...' : `${tradeType === 'BUY' ? 'Buy Long' : 'Sell Short'} ${selectedCoin.symbol}`}
-                      </motion.button>
-
-                      {/* Error Message */}
-                      <AnimatePresence>
-                        {tradeType === 'BUY' && marginUsed > balance && (
-                          <motion.p
-                            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                            className="text-center text-xs md:text-[11px] text-yellow-600 dark:text-[#F0B90B] font-medium"
-                          >
-                            Insufficient balance to open this position.
-                          </motion.p>
-                        )}
-                      </AnimatePresence>
                     </div>
                   </div>
                 </Card>

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { useAuthFetch } from '@/lib/authFetch';
 import { useNotification } from '@/components/ClientProviders';
 import { User, Shield, Activity, CheckCircle, Lock, Monitor, DollarSign } from 'lucide-react';
 import ChangePasswordModal from '@/components/ChangePasswordModal';
@@ -43,7 +44,8 @@ const ActionButton: React.FC<{ label: string; icon: React.ElementType; color: st
 
 
 const ProfilePage: React.FC = () => {
-    const { user, accessToken } = useAuth();
+    const { user } = useAuth();
+    const authFetch = useAuthFetch();
     const { addNotification } = useNotification();
     const [profileData, setProfileData] = useState<any>(null);
     const [activityLog, setActivityLog] = useState<any[]>([]);
@@ -53,21 +55,12 @@ const ProfilePage: React.FC = () => {
     useEffect(() => {
 
         const fetchProfileData = async () => {
-            if (!accessToken) {
-                console.error('No access token available for profile fetch');
-                return;
-            }
             try {
-                const response = await fetch('/api/profile', {
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                    },
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    setProfileData(data);
+                const res = await authFetch('/api/profile');
+                if (res.ok) {
+                    setProfileData(res.data);
                 } else {
-                    console.error('Profile fetch failed:', response.status, response.statusText);
+                    console.error('Profile fetch failed:', res.error);
                 }
             } catch (error: any) {
                 console.error('Error fetching profile data:', error);
@@ -75,21 +68,12 @@ const ProfilePage: React.FC = () => {
         };
 
         const fetchActivityLog = async () => {
-            if (!accessToken) {
-                console.error('No access token available for activity log fetch');
-                return;
-            }
             try {
-                const response = await fetch('/api/activity-log', {
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                    },
-                });
-                if (response.ok) {
-                    const data = await response.json();
-                    setActivityLog(data);
+                const res = await authFetch('/api/activity-log');
+                if (res.ok) {
+                    setActivityLog(res.data);
                 } else {
-                    console.error('Activity log fetch failed:', response.status, response.statusText);
+                    console.error('Activity log fetch failed:', res.error);
                 }
             } catch (error: any) {
                 console.error('Error fetching activity log:', error);
@@ -101,19 +85,10 @@ const ProfilePage: React.FC = () => {
     }, []);
 
     const fetchFullActivityLog = async () => {
-        if (!accessToken) {
-            console.error('No access token available for full activity log fetch');
-            return;
-        }
         try {
-            const response = await fetch('/api/activity-log?full=true', {
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                },
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setActivityLog(data);
+            const res = await authFetch('/api/activity-log?full=true');
+            if (res.ok) {
+                setActivityLog(res.data);
                 setIsFullLogLoaded(true);
             }
         } catch (error: any) {

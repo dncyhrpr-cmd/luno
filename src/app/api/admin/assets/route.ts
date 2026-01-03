@@ -1,28 +1,66 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FirestoreDatabase } from '../../../../lib/firestore-db';
-import { getRequestId, handleApiError, structuredLog } from '../../../../lib/correlation';
-import { extractTokenFromRequest, verifyAccessToken, AuthTokenPayload } from '../../../../lib/auth-utils';
+import { prisma } from '@/lib/db';
+import { Asset } from '@prisma/client';
+import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
+import { verifyAdmin } from '@/lib/auth-utils';
 
-const firestoreDB = new FirestoreDatabase();
+// PATCH - Lock/unlock asset (admin only)
+export async function PATCH(request: NextRequest) {
+    const reqId = getRequestId(request);
+    const route = request.url;
 
-// Middleware to verify admin privileges
-async function verifyAdmin(request: NextRequest, reqId: string): Promise<AuthTokenPayload | null> {
-    const token = extractTokenFromRequest(request);
-    if (!token) {
-        structuredLog('WARN', reqId, 'Unauthorized: Missing token for admin asset seizure', { status: 401 });
-        return null;
+    const adminPayload = await verifyAdmin(request, reqId);
+    if (!adminPayload) {
+        return NextResponse.json({ error: 'Unauthorized or Forbidden', correlationId: reqId }, { status: 403 });
     }
 
     try {
-        const payload = await verifyAccessToken(token);
-        if (!payload.roles?.includes('admin')) {
-            structuredLog('WARN', reqId, 'Forbidden: User is not an admin', { userId: payload.userId, status: 403 });
-            return null;
+        const { userId, assetId, locked, reason } = await request.json();
+
+        if (!userId) {
+            structuredLog('WARN', reqId, 'Missing userId for asset lock/unlock', { status: 400 });
+            return NextResponse.json({ error: 'userId is required', correlationId: reqId }, { status: 400 });
         }
-        return payload;
+
+        if (!assetId) {
+            structuredLog('WARN', reqId, 'Missing assetId for asset lock/unlock', { status: 400 });
+            return NextResponse.json({ error: 'assetId is required', correlationId: reqId }, { status: 400 });
+        }
+
+        if (typeof locked !== 'boolean') {
+            structuredLog('WARN', reqId, 'Invalid locked value', { status: 400 });
+            return NextResponse.json({ error: 'locked must be boolean', correlationId: reqId }, { status: 400 });
+        }
+
+        structuredLog('INFO', reqId, 'Processing asset lock/unlock', { adminId: adminPayload.userId, userId, assetId, locked });
+
+        // Update asset lock status
+        await prisma.asset.update({
+            where: { id: assetId },
+            data: {
+                locked
+            } as any
+        });
+
+        // Create notification alert
+        await prisma.alert.create({
+            data: {
+                userId,
+                type: locked ? 'asset_lock' : 'asset_unlock',
+                title: locked ? 'Asset Locked' : 'Asset Unlocked',
+                message: locked ? `Your asset has been locked by administrator. Reason: ${reason || 'N/A'}` : `Your asset has been unlocked.`,
+            },
+        });
+
+        structuredLog('INFO', reqId, 'Asset lock/unlock completed successfully', { userId, assetId, locked, adminId: adminPayload.userId });
+        return NextResponse.json({
+            message: `Successfully ${locked ? 'locked' : 'unlocked'} asset`,
+            success: true,
+            correlationId: reqId
+        });
+
     } catch (error: any) {
-        structuredLog('WARN', reqId, 'Auth token error on admin asset seizure', { error: error.message, status: 401 });
-        return null;
+        return handleApiError(reqId, error, route, 'Failed to process asset lock/unlock');
     }
 }
 
@@ -52,7 +90,7 @@ export async function POST(request: NextRequest) {
         structuredLog('INFO', reqId, 'Processing asset seizure', { adminId: adminPayload.userId, userId, symbol, quantity });
 
         // Get user's current assets
-        const userAssets = await firestoreDB.getAssets(userId);
+        const userAssets = await prisma.asset.findMany({ where: { userId } });
         if (userAssets.length === 0) {
             structuredLog('WARN', reqId, 'User has no assets to seize', { userId, status: 400 });
             return NextResponse.json({ error: 'User has no assets to seize', correlationId: reqId }, { status: 400 });
@@ -62,7 +100,7 @@ export async function POST(request: NextRequest) {
         if (symbol === 'ALL') {
             assetsToSeize = userAssets;
         } else {
-            const asset = userAssets.find(a => a.symbol === symbol);
+            const asset = userAssets.find((a: Asset) => a.symbol === symbol);
             if (!asset) {
                 structuredLog('WARN', reqId, 'Asset not found for user', { userId, symbol, status: 404 });
                 return NextResponse.json({ error: 'Asset not found for user', correlationId: reqId }, { status: 404 });
@@ -70,8 +108,37 @@ export async function POST(request: NextRequest) {
             assetsToSeize = [asset];
         }
 
-        // Process seizure in transaction
-        await firestoreDB.processAssetSeizure(userId, assetsToSeize, adminPayload.userId, quantity);
+        // Process seizure - delete assets and create transaction history
+        for (const asset of assetsToSeize) {
+            const seizeQuantity = quantity || asset.quantity;
+
+            // Create transaction history for seizure
+            await prisma.transactionHistory.create({
+                data: {
+                    userId,
+                    type: 'seizure',
+                    amount: seizeQuantity * (asset.currentPrice || asset.averagePrice || 0),
+                    symbol: asset.symbol,
+                    quantity: seizeQuantity,
+                    description: `Asset seizure by admin ${adminPayload.userId}`,
+                    reason: 'Admin seizure',
+                    balanceBefore: 0, 
+                    balanceAfter: 0
+                }
+            });
+
+            // Delete or update asset
+            if (quantity && quantity < asset.quantity) {
+                await prisma.asset.update({
+                    where: { userId_symbol: { userId, symbol: asset.symbol } },
+                    data: { quantity: asset.quantity - seizeQuantity }
+                });
+            } else {
+                await prisma.asset.delete({
+                    where: { userId_symbol: { userId, symbol: asset.symbol } }
+                });
+            }
+        }
 
         structuredLog('INFO', reqId, 'Asset seizure completed successfully', { userId, symbol, adminId: adminPayload.userId });
         return NextResponse.json({
@@ -120,8 +187,52 @@ export async function PUT(request: NextRequest) {
 
         structuredLog('INFO', reqId, 'Processing asset restoration', { adminId: adminPayload.userId, userId, symbol, quantity, price });
 
-        // Process restoration in transaction
-        await firestoreDB.processAssetRestoration(userId, symbol, quantity, price, adminPayload.userId);
+        // Process restoration - create/update asset and transaction history
+        const existingAsset = await prisma.asset.findUnique({
+            where: { userId_symbol: { userId, symbol } }
+        });
+
+        if (existingAsset) {
+            // Update existing asset
+            const newQuantity = existingAsset.quantity + quantity;
+            const newAveragePrice = ((existingAsset.averagePrice * existingAsset.quantity) + (price * quantity)) / newQuantity;
+
+            await prisma.asset.update({
+                where: { userId_symbol: { userId, symbol } },
+                data: {
+                    quantity: newQuantity,
+                    averagePrice: newAveragePrice,
+                    currentPrice: price
+                }
+            });
+        } else {
+            // Create new asset
+            await prisma.asset.create({
+                data: {
+                    userId,
+                    symbol,
+                    quantity,
+                    averagePrice: price,
+                    currentPrice: price
+                }
+            });
+        }
+
+        // Create transaction history for restoration
+        await prisma.transactionHistory.create({
+            data: {
+                userId,
+                type: 'restoration',
+                amount: quantity * price,
+                symbol,
+                quantity,
+                price,
+                description: `Asset restoration by admin ${adminPayload.userId}`,
+                reason: 'Admin restoration',
+                balanceBefore: 0,
+                balanceAfter: 0
+            }
+        });
 
         structuredLog('INFO', reqId, 'Asset restoration completed successfully', { userId, symbol, adminId: adminPayload.userId });
         return NextResponse.json({

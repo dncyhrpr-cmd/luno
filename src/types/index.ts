@@ -3,8 +3,8 @@ export interface User {
   id: string;
   email: string;
   username: string;
-  role: 'admin' | 'trader' | 'guest';
-  roles: Array<'admin' | 'trader' | 'guest'>;
+  role: string;
+  roles: string[];
   isAdmin: boolean;
   accessToken?: string;
   migrationStatus: 'migrated' | 'legacy';

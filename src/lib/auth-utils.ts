@@ -1,8 +1,10 @@
 import * as jose from 'jose';
 import { randomUUID } from 'crypto'; // For generating JTI and general UUIDs
-import { User } from './firestore-db';
+import { PrismaClient } from '@prisma/client';
 import { structuredLog } from './correlation';
 import { NextRequest } from 'next/server';
+
+const prisma = new PrismaClient();
 
 // Get secrets from environment variables
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback_secret_must_be_strong');
@@ -16,11 +18,17 @@ const REFRESH_TOKEN_KID = 'v1_refresh_key'; // Key ID for rotation tracking
 
 // --- Types ---
 // Assuming User model has a migrationStatus field (legacy | migrated)
-export type MigrationStatus = 'legacy' | 'migrated'; 
+export type MigrationStatus = 'legacy' | 'migrated';
 
 export interface AuthTokenPayload extends jose.JWTPayload {
   userId: string;
   roles: string[];
+  migrationStatus: MigrationStatus;
+}
+
+export interface UserForTokens {
+  id: string;
+  roles: string;
   migrationStatus: MigrationStatus;
 }
 
@@ -56,10 +64,17 @@ async function createToken(
  * @param user The user object (assuming User includes id, roles, and migrationStatus).
  * @returns An object containing the access and refresh tokens.
  */
-export async function generateAuthTokens(user: Pick<User, 'id' | 'roles' | 'migrationStatus'>) {
+export async function generateAuthTokens(user: UserForTokens) {
+  let roles: string[] = [];
+  try {
+    roles = JSON.parse(user.roles || '[]');
+  } catch {
+    roles = [];
+  }
+
   const basePayload: AuthTokenPayload = {
     userId: user.id,
-    roles: user.roles || [], // Ensure roles is defined (assuming User now includes roles)
+    roles,
     migrationStatus: user.migrationStatus,
   };
 
@@ -100,10 +115,25 @@ async function verifyToken(token: string, secret: Uint8Array): Promise<AuthToken
 }
 
 /**
- * Verifies an access token.
+ * Verifies an access token and checks if it's revoked.
  */
 export async function verifyAccessToken(token: string): Promise<AuthTokenPayload> {
-  return verifyToken(token, JWT_SECRET);
+  const payload = await verifyToken(token, JWT_SECRET);
+
+  if (payload.jti) {
+    const revocation = await prisma.tokenRevocation.findFirst({
+      where: {
+        userId: payload.userId,
+        expiresAt: { gte: new Date() }
+      }
+    });
+
+    if (revocation) {
+      throw new Error('Token has been revoked');
+    }
+  }
+
+  return payload;
 }
 
 /**
@@ -147,4 +177,48 @@ export function extractTokenFromRequest(req: NextRequest): string | null {
     return authHeader.substring(7);
   }
   return null;
+}
+
+/**
+ * Shared utility to verify admin privileges in API routes.
+ */
+export async function verifyAdmin(request: NextRequest, reqId: string): Promise<AuthTokenPayload | null> {
+  const token = extractTokenFromRequest(request);
+  if (!token) {
+    structuredLog('WARN', reqId, 'Unauthorized: Missing token', { status: 401 });
+    return null;
+  }
+
+  try {
+    const payload = await verifyAccessToken(token);
+    
+    // Normalize roles to an array
+    let roles: string[] = [];
+    if (Array.isArray(payload.roles)) {
+      roles = payload.roles;
+    } else if (typeof payload.roles === 'string') {
+      try {
+        roles = JSON.parse(payload.roles);
+      } catch {
+        roles = [payload.roles];
+      }
+    }
+
+    if (!roles.includes('admin')) {
+      structuredLog('WARN', reqId, 'Forbidden: User is not an admin', { 
+        userId: payload.userId, 
+        roles, 
+        status: 403 
+      });
+      return null;
+    }
+    
+    return payload;
+  } catch (error: any) {
+    structuredLog('WARN', reqId, 'Auth token verification failed', { 
+      error: error.message, 
+      status: 401 
+    });
+    return null;
+  }
 }

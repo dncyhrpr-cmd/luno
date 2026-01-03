@@ -23,22 +23,51 @@ class BinanceAPI {
    * Get current prices, 24h change, and volume for multiple symbols.
    */
   async getPrices(symbols: string[]): Promise<CryptoPrice[]> {
-    // Temporary mock data for testing
-    console.log('Using mock data for symbols:', symbols);
-    const mockData: CryptoPrice[] = [
-      { symbol: 'BTC', price: 95000, change: 2.5, volume: 1500000 },
-      { symbol: 'ETH', price: 3200, change: -1.2, volume: 800000 },
-      { symbol: 'SOL', price: 180, change: 5.8, volume: 200000 },
-      { symbol: 'BNB', price: 650, change: 1.1, volume: 100000 },
-      { symbol: 'ADA', price: 0.85, change: -0.5, volume: 50000 },
-      { symbol: 'DOGE', price: 0.32, change: 3.2, volume: 30000 },
-      { symbol: 'XRP', price: 1.15, change: 0.8, volume: 40000 },
-      { symbol: 'LTC', price: 125, change: -2.1, volume: 20000 },
-      { symbol: 'MATIC', price: 1.85, change: 4.5, volume: 25000 },
-      { symbol: 'LINK', price: 18.5, change: 1.8, volume: 15000 },
-    ];
+    try {
+      // If symbols are provided, we can fetch specific ones. 
+      // However, Binance API 'ticker/24hr' with symbols parameter requires JSON string format ["BTCUSDT","ETHUSDT"]
+      // Or we can fetch all and filter. Fetching all is lighter than many individual requests but heavier than one specific request.
+      
+      let url = 'https://api.binance.com/api/v3/ticker/24hr';
+      
+      // If we have a small number of symbols, we can try to optimize, but typically fetching all is robust enough
+      // unless we need very specific ones.
+      // For now, let's fetch all and filter client-side (server-side in this context) to keep it simple
+      // as constructing the symbols query param can be tricky with length limits.
 
-    return mockData.filter(item => symbols.includes(item.symbol + 'USDT'));
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch prices: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Map all data to CryptoPrice format
+      const allPrices: CryptoPrice[] = data.map((item: any) => ({
+        symbol: item.symbol,
+        price: parseFloat(item.lastPrice),
+        change: parseFloat(item.priceChangePercent),
+        volume: parseFloat(item.quoteVolume), // quoteVolume is usually in USDT for USDT pairs
+      }));
+
+      // Filter if symbols are provided
+      if (symbols && symbols.length > 0) {
+        // Ensure symbols are in the format the caller expects (likely without USDT or need to check)
+        // The caller usually passes "BTC", "ETH". But Binance returns "BTCUSDT".
+        // Let's assume the caller might pass "BTC" or "BTCUSDT".
+        
+        return allPrices.filter(p => {
+            const base = p.symbol.replace('USDT', '');
+            return symbols.includes(p.symbol) || symbols.includes(base);
+        });
+      }
+      
+      return allPrices;
+
+    } catch (error) {
+      console.error('Error fetching prices from Binance:', error);
+      return [];
+    }
   }
 
   /**
@@ -72,7 +101,7 @@ class BinanceAPI {
    */
   async getUSDTSymbols(): Promise<string[]> {
     try {
-      const response = await fetch('https://api.binance.com/api/v3/exchangeInfo');
+      const response = await fetch('https://api.binance.com/api/v3/exchangeInfo', { cache: 'no-store' });
       if (!response.ok) {
         throw new Error(`Failed to fetch exchange info: ${response.status}`);
       }

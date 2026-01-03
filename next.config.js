@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  compress: true, // Enable gzip/brotli compression
   images: {
     unoptimized: true,
   },

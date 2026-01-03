@@ -1,12 +1,16 @@
-import React from 'react';
+'use client';
+import React, { useState } from 'react';
 
 interface CoinIconProps {
   symbol: string;
+  src?: string;
   size?: number;
   className?: string;
 }
 
-export const CoinIcon: React.FC<CoinIconProps> = ({ symbol, size = 24, className = '' }) => {
+export const CoinIcon: React.FC<CoinIconProps> = ({ symbol, src, size = 24, className = '' }) => {
+  const [imgError, setImgError] = useState(false);
+
   const getCoinIcon = (symbol: string) => {
     switch (symbol.toUpperCase()) {
       case 'BTC':
@@ -101,6 +105,19 @@ export const CoinIcon: React.FC<CoinIconProps> = ({ symbol, size = 24, className
         );
     }
   };
+
+  if (src && !imgError) {
+    return (
+      <img 
+        src={src} 
+        alt={symbol} 
+        width={size} 
+        height={size} 
+        className={`rounded-full object-cover ${className}`}
+        onError={() => setImgError(true)} 
+      />
+    );
+  }
 
   return getCoinIcon(symbol);
 };

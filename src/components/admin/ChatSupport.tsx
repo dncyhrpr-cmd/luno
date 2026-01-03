@@ -1,120 +1,85 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, MessageCircle, Users } from 'lucide-react';
-import { getDb } from '@/lib/client-db';
-import { collection, addDoc, onSnapshot, query, orderBy, Timestamp, getDocs, limit, doc, setDoc, getDoc } from 'firebase/firestore';
+import { MessageCircle, Send, Users, ArrowLeft } from 'lucide-react';
+import { useAuthFetch } from '@/lib/authFetch';
+
+interface Chat {
+  id: string;
+  user: { id: string; username: string; email: string };
+  messages: Message[];
+  _count: { messages: number };
+  status: string;
+  updatedAt: string;
+}
 
 interface Message {
   id: string;
+  sender: string;
   text: string;
-  sender: 'user' | 'admin';
-  timestamp: Timestamp;
-}
-
-interface ChatUser {
-  id: string;
-  name: string;
-  email: string;
-  lastMessage?: Message;
+  createdAt: string;
 }
 
 const ChatSupport: React.FC = () => {
-  const db = getDb();
-  const [chats, setChats] = useState<ChatUser[]>([]);
-  const [selectedChat, setSelectedChat] = useState<string | null>(null);
+  const authFetch = useAuthFetch();
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Listen to all chats in real-time
-  useEffect(() => {
-    const chatsRef = collection(db, 'chats');
-
-    const unsubscribe = onSnapshot(chatsRef, async (snapshot) => {
-      const chatUsers: ChatUser[] = [];
-
-      for (const chatDoc of snapshot.docs) {
-        const userId = chatDoc.id;
-        // Get the most recent message for this chat
-        const messagesRef = collection(db, 'chats', userId, 'messages');
-        const q = query(messagesRef, orderBy('timestamp', 'desc'), limit(1));
-        const lastMessageSnap = await getDocs(q);
-        const lastMessage = lastMessageSnap.docs[0]?.data() as Message | undefined;
-
-        // Get actual user data from users collection
-        let userName = `User ${userId.slice(-4)}`;
-        let userEmail = `${userId}@example.com`;
-
-        try {
-          const userDocRef = doc(db, 'users', userId);
-          const userDoc = await getDoc(userDocRef);
-          if (userDoc.exists()) {
-            const userData = userDoc.data() as { username?: string; email?: string };
-            userName = userData.username || userName;
-            userEmail = userData.email || userEmail;
-          }
-        } catch (error) {
-          console.error('Error fetching user data:', error);
-        }
-
-        chatUsers.push({
-          id: userId,
-          name: userName,
-          email: userEmail,
-          lastMessage
-        });
+  const fetchChats = async () => {
+    try {
+      const result = await authFetch('/api/admin/support');
+      if (result.ok && result.data) {
+        setChats(result.data);
       }
-
-      // Sort chats by most recent message
-      chatUsers.sort((a, b) => {
-        const aTime = a.lastMessage?.timestamp?.toMillis() || 0;
-        const bTime = b.lastMessage?.timestamp?.toMillis() || 0;
-        return bTime - aTime;
-      });
-
-      setChats(chatUsers);
+    } catch (error) {
+      console.error('Error fetching chats:', error);
+    } finally {
       setLoading(false);
-    });
+    }
+  };
 
-    return () => unsubscribe();
-  }, []);
-
-  // Listen to selected chat messages
-  useEffect(() => {
-    if (!selectedChat) return;
-
-    const chatRef = collection(db, 'chats', selectedChat, 'messages');
-    const q = query(chatRef, orderBy('timestamp', 'asc'));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs: Message[] = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Message));
-      setMessages(msgs);
-      scrollToBottom();
-    });
-
-    return () => unsubscribe();
-  }, [selectedChat]);
+  const fetchMessagesForChat = async (chatId: string) => {
+    try {
+      // For admin, we can use the user API but as admin, or create a separate endpoint
+      // For now, assume admin can access user messages
+      // Actually, let's create messages for the selected chat
+      const chat = chats.find(c => c.id === chatId);
+      if (chat) {
+        setMessages(chat.messages || []);
+      }
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+    }
+  };
 
   const sendMessage = async () => {
     if (!newMessage.trim() || !selectedChat) return;
 
     try {
-      const chatRef = collection(db, 'chats', selectedChat, 'messages');
-      await addDoc(chatRef, {
-        text: newMessage.trim(),
-        sender: 'admin',
-        timestamp: Timestamp.now()
+      const result = await authFetch('/api/admin/support', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ chatId: selectedChat.id, text: newMessage.trim() }),
       });
-      setNewMessage('');
+
+      if (result.ok && result.data) {
+        setMessages(prev => [...prev, result.data]);
+        setNewMessage('');
+        scrollToBottom();
+        // Refresh chats to update latest message
+        fetchChats();
+      }
     } catch (error) {
       console.error('Error sending message:', error);
     }
@@ -127,79 +92,120 @@ const ChatSupport: React.FC = () => {
     }
   };
 
+  const selectChat = (chat: Chat) => {
+    setSelectedChat(chat);
+    setMessages(chat.messages || []);
+  };
+
+  useEffect(() => {
+    fetchChats();
+
+    // Polling for new chats every 10 seconds
+    intervalRef.current = setInterval(fetchChats, 10000);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-4 border-t-4 border-blue-600 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full bg-white rounded-lg shadow-lg dark:bg-gray-800">
+    <div className="flex flex-col h-full bg-white rounded-lg shadow-lg md:flex-row dark:bg-gray-800">
       {/* Chat List */}
-      <div className="w-1/3 border-r border-gray-200 dark:border-gray-700">
+      <div className={`w-full md:w-1/3 ${selectedChat ? 'hidden md:block' : 'block'} border-r border-gray-200 dark:border-gray-700 md:border-r-0`}>
         <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
+          <h3 className="flex items-center text-lg font-semibold text-gray-900 dark:text-white">
             <Users className="w-5 h-5 mr-2" />
             Support Chats
-          </h2>
+          </h3>
         </div>
-        <div className="overflow-y-auto">
-          {loading ? (
-            <div className="flex items-center justify-center h-32">
-              <div className="w-8 h-8 border-4 border-t-4 border-blue-600 rounded-full animate-spin"></div>
-            </div>
-          ) : chats.length === 0 ? (
+        <div className="h-full overflow-y-auto">
+          {chats.length === 0 ? (
             <div className="p-4 text-center text-gray-500 dark:text-gray-400">
-              No active chats
+              No chats yet
             </div>
           ) : (
             chats.map((chat) => (
               <div
                 key={chat.id}
-                onClick={() => setSelectedChat(chat.id)}
-                className={`p-4 border-b border-gray-100 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 ${
-                  selectedChat === chat.id ? 'bg-blue-50 dark:bg-blue-900/20' : ''
+                className={`p-4 border-b border-gray-100 dark:border-gray-600 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 ${
+                  selectedChat?.id === chat.id ? 'bg-blue-50 dark:bg-blue-900' : ''
                 }`}
+                onClick={() => selectChat(chat)}
               >
-                <div className="font-semibold text-gray-900 dark:text-white">{chat.name}</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">{chat.email}</div>
-                {chat.lastMessage && (
-                  <div className="mt-1 text-xs text-gray-400 truncate">
-                    {chat.lastMessage.text}
-                  </div>
-                )}
+                <div className="font-medium text-gray-900 dark:text-white">
+                  {chat.user.username}
+                </div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  {chat.user.email}
+                </div>
+                <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                  {chat._count.messages} messages • {new Date(chat.updatedAt).toLocaleDateString()}
+                </div>
               </div>
             ))
           )}
         </div>
       </div>
 
-      {/* Chat Window */}
+      {/* Chat Interface */}
       <div className="flex flex-col flex-1">
         {selectedChat ? (
           <>
             {/* Header */}
             <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Chat with {chats.find(c => c.id === selectedChat)?.name}
-              </h3>
+              <div className="flex items-center">
+                <button onClick={() => setSelectedChat(null)} className="p-2 mr-2 rounded-full md:hidden hover:bg-gray-100 dark:hover:bg-gray-700">
+                  <ArrowLeft size={20} />
+                </button>
+                <h4 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Chat with {selectedChat.user.username}
+                </h4>
+              </div>
             </div>
 
             {/* Messages */}
             <div className="flex-1 p-4 space-y-4 overflow-y-auto">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.sender === 'admin' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                      message.sender === 'admin'
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'
-                    }`}
-                  >
-                    <p className="text-sm">{message.text}</p>
-                    <p className="mt-1 text-xs opacity-70">
-                      {message.timestamp.toDate().toLocaleTimeString()}
-                    </p>
-                  </div>
+              {messages.length === 0 ? (
+                <div className="flex items-center justify-center h-32">
+                  <p className="text-gray-500 dark:text-gray-400">No messages yet</p>
                 </div>
-              ))}
+              ) : (
+                messages
+                  .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+                  .map((message) => (
+                    <div
+                      key={message.id}
+                      className={`flex ${message.sender === 'support' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                          message.sender === 'support'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'
+                        }`}
+                      >
+                        <p className="text-sm">{message.text}</p>
+                        <p className="mt-1 text-xs opacity-70">
+                          {new Date(message.createdAt).toLocaleTimeString()}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+              )}
               <div ref={messagesEndRef} />
             </div>
 
@@ -228,7 +234,12 @@ const ChatSupport: React.FC = () => {
           <div className="flex items-center justify-center flex-1">
             <div className="text-center">
               <MessageCircle className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-              <p className="text-gray-500 dark:text-gray-400">Select a chat to start responding</p>
+              <h3 className="mb-2 text-lg font-semibold text-gray-900 dark:text-white">
+                Select a Chat
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400">
+                Choose a chat from the list to start responding
+              </p>
             </div>
           </div>
         )}

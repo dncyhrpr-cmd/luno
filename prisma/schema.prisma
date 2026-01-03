@@ -1,0 +1,324 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String   @id @default(cuid())
+  username          String   @unique
+  email             String   @unique
+  password          String?
+  role              String   @default("user")
+  balance           Float    @default(0)
+  twoFactorEnabled  Boolean  @default(false)
+  twoFactorSecret   String?
+  backupCodes       String?
+  roles             String   @default("[]")
+  migrationStatus   String   @default("legacy") // legacy | migrated
+  status            String   @default("active") // active | inactive | banned
+  lastLogin         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  orders            Order[]
+  assets            Asset[]
+  alerts            Alert[]
+  transactionRequests TransactionRequest[]
+  transactionHistory TransactionHistory[]
+  kycData           KYCData?
+  auditLogs         AuditLog[]
+  twoFactorAuth     TwoFactorAuth?
+  scheduledOrders   ScheduledOrder[]
+  advancedOrders    AdvancedOrder[]
+  portfolioAnalytics PortfolioAnalytics[]
+  tokenRevocations   TokenRevocation[]
+  chats             Chat[]
+
+  @@map("users")
+}
+
+model Order {
+  id                String   @id @default(cuid())
+  userId            String
+  type              String   // buy | sell
+  symbol            String
+  quantity          Float
+  price             Float
+  status            String   @default("pending") // pending | executed | cancelled | failed | win | loss
+  executedQuantity  Float    @default(0)
+  leverage          Float?
+  marginUsed        Float?
+  pnl               Float?
+  orderType         String?  // market | limit | stop_loss | take_profit
+  exitPrice         Float?
+  resolvedAt        DateTime?
+  // Binary order fields
+  direction         String?
+  entryPrice        Float?
+  amount            Float?
+  profitPercent     Float?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("orders")
+}
+
+model Asset {
+  id                String   @id @default(cuid())
+  userId            String
+  symbol            String
+  quantity          Float
+  averagePrice      Float
+  currentPrice      Float?
+  locked            Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, symbol])
+  @@map("assets")
+}
+
+model TransactionRequest {
+  id                String   @id @default(cuid())
+  userId            String
+  type              String   // deposit | withdraw
+  amount            Float
+  status            String   @default("pending") // pending | approved | rejected | executed
+  reason            String?
+  createdAt         DateTime @default(now())
+  approvedAt        DateTime?
+  approvedBy        String?
+  executedAt        DateTime?
+  processedBy       String?
+
+  // Bank details for withdrawals
+  bankName          String?
+  holderName        String?
+  accountNumber     String?
+  ifscCode          String?
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("requests")
+}
+
+model TransactionHistory {
+  id                String   @id @default(cuid())
+  userId            String
+  type              String   // deposit | withdraw | buy | sell | fee | seizure | restoration
+  amount            Float
+  symbol            String?
+  quantity          Float?
+  price             Float?
+  description       String
+  reason            String?  // Reason for seizure or restoration
+  status            String   @default("completed") // completed | pending | failed
+  balanceBefore     Float
+  balanceAfter      Float
+  createdAt         DateTime @default(now())
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("transaction_history")
+}
+
+model KYCData {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  fullName          String
+  dateOfBirth       String
+  phoneNumber       String?
+  nationality       String?
+  idType            String?  // passport | driving_license | national_id
+  idNumber          String?
+  address           String
+  city              String?
+  postalCode        String?
+  country           String?
+  status            String   @default("unsubmitted") // unsubmitted | pending | approved | rejected
+  selfieUrl         String
+  documentUrl       String
+  rejectionReason   String?
+  submittedAt       DateTime?
+  verifiedAt        DateTime?
+  verifiedBy        String?
+  createdAt         DateTime @default(now())
+  adminNotes        String?
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("kyc_data")
+}
+
+model AuditLog {
+  id                String   @id @default(cuid())
+  userId            String?
+  adminId           String?
+  action            String
+  resourceType      String
+  resourceId        String
+  changes           String
+  ipAddress         String?
+  userAgent         String?
+  status            String   @default("success") // success | failure
+  errorMessage      String?
+  createdAt         DateTime @default(now())
+
+  // Relations
+  user              User?    @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
+
+model TwoFactorAuth {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  enabled           Boolean  @default(false)
+  secret            String?
+  backupCodes       String   // JSON string of array
+  lastUsedAt        DateTime?
+  createdAt         DateTime @default(now())
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("two_factor_auth")
+}
+
+model Alert {
+  id                String   @id @default(cuid())
+  userId            String
+  type              String   // price | order | balance | transaction | system
+  title             String
+  message           String
+  read              Boolean  @default(false)
+  deleted           Boolean  @default(false)
+  actionUrl         String?
+  createdAt         DateTime @default(now())
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("alerts")
+}
+
+model ScheduledOrder {
+  id                String   @id @default(cuid())
+  userId            String
+  symbol            String
+  type              String   // buy | sell
+  quantity          Float
+  price             Float?
+  orderType         String   // limit | market
+  scheduledTime     DateTime
+  triggerCondition  String?
+  status            String   @default("pending") // pending | executed | cancelled | failed
+  createdAt         DateTime @default(now())
+  executedAt        DateTime?
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("scheduled_orders")
+}
+
+model AdvancedOrder {
+  id                String   @id @default(cuid())
+  userId            String
+  symbol            String
+  baseOrderType     String   // stop_loss | take_profit | trailing_stop | oco
+  quantity          Float
+  status            String   @default("active") // active | triggered | executed | cancelled
+  stopPrice         Float?
+  targetPrice       Float?
+  limitPrice        Float?
+  trailingPercent   Float?
+  linkedOrderIds    String   // JSON string of array
+  createdAt         DateTime @default(now())
+  triggeredAt       DateTime?
+  executedAt        DateTime?
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("advanced_orders")
+}
+
+model PortfolioAnalytics {
+  id                String   @id @default(cuid())
+  userId            String
+  date              String   // YYYY-MM-DD format
+  totalValue        Float
+  cash              Float
+  investedValue     Float
+  gainLoss          Float
+  gainLossPercent   Float
+  dayChange         Float
+  dayChangePercent  Float
+  allTimeReturn     Float
+  assetBreakdown    String   // JSON string
+  createdAt         DateTime @default(now())
+
+  // Relations
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("portfolio_analytics")
+}
+
+model TokenRevocation {
+  id                String   @id @default(cuid())
+  userId            String
+  revokedAt         DateTime @default(now())
+  expiresAt         DateTime
+
+  // Relations
+  user              User?    @relation(fields: [userId], references: [id])
+
+  @@unique([userId, expiresAt])
+  @@map("token_revocation")
+}
+
+model Chat {
+  id        String   @id @default(cuid())
+  userId    String
+  subject   String?
+  status    String   @default("open") // open | closed | resolved
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@map("chats")
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  chatId    String
+  sender    String   // user | support
+  text      String
+  createdAt DateTime @default(now())
+
+  // Relations
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}

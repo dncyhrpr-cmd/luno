@@ -1,78 +1,113 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateAuthTokens } from '@/lib/auth-utils';
-import { FirestoreDatabase } from '@/lib/firestore-db';
-import { logUserActivity } from '@/lib/db';
+import { PrismaClient } from '@prisma/client';
+import bcryptjs from 'bcryptjs';
 
-const firestoreDB = new FirestoreDatabase();
-
-// Simple in-memory user store for demo purposes
-// In production, replace with proper database
-const users = new Map();
+const prisma = new PrismaClient();
 
 export async function POST(request: NextRequest) {
   try {
     const { email, password } = await request.json();
+    console.log('Login attempt for email:', email);
 
     if (!email || !password) {
       return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
     }
 
-    // Check if user exists (for demo, accept any email/password combination)
-    // In production, implement proper user validation
-    const userId = `user_${email.replace('@', '_').replace('.', '_')}`;
-    const username = email.split('@')[0];
-
-    const user = {
-      id: userId,
-      email: email,
-      username: username,
-      role: email === 'dncyhrpr@gmail.com' ? 'admin' : 'trader',
-      roles: email === 'dncyhrpr@gmail.com' ? ['admin', 'trader'] : ['trader'],
-      isAdmin: email === 'dncyhrpr@gmail.com',
-      migrationStatus: 'migrated',
-    };
-
-    // Store user in Firestore for persistence
-    try {
-      await firestoreDB.createUser({
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        roles: user.roles,
-        balance: 0, // Starting balance
-        twoFactorEnabled: false,
-        migrationStatus: user.migrationStatus as any,
-      }, userId);
-    } catch (error: any) {
-      // User might already exist, continue
-      console.log('User creation skipped:', error.message);
+    if (typeof email !== 'string' || !email.includes('@')) {
+      return NextResponse.json({ error: 'Invalid email format' }, { status: 400 });
     }
 
-    // Store user for future reference
-    users.set(userId, user);
+    if (typeof password !== 'string' || password.length === 0) {
+      return NextResponse.json({ error: 'Invalid password format' }, { status: 400 });
+    }
 
+    const normalizedEmail = email.toLowerCase().trim();
+
+    console.log('Finding user by email');
+    // Fetch user from Prisma by email
+    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    console.log('User found:', !!user, user ? user.email : 'none');
+
+    if (!user) {
+      return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+    }
+
+    // Verify password hash
+    const passwordField = user.password;
+    if (!passwordField) {
+      return NextResponse.json(
+        {
+          error: 'Password not set for this account. Please use password reset functionality.',
+          code: 'NO_PASSWORD_SET'
+        },
+        { status: 401 }
+      );
+    }
+
+    let isPasswordValid = false;
+    try {
+      isPasswordValid = await bcryptjs.compare(password, passwordField);
+    } catch (bcryptError: any) {
+      console.error('Password comparison error:', bcryptError);
+      return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+    }
+    if (!isPasswordValid) {
+      return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+    }
+
+    // Ensure roles is an array
+    let userRoles: string[] = [];
+    if (Array.isArray(user.roles)) {
+      userRoles = user.roles;
+    } else if (typeof user.roles === 'string') {
+      try {
+        userRoles = JSON.parse(user.roles);
+      } catch {
+        userRoles = [user.roles];
+      }
+    } else {
+      userRoles = [user.role || 'trader'];
+    }
+
+    console.log('User roles parsed:', userRoles);
+
+    console.log('About to generate tokens');
     const tokens = await generateAuthTokens({
       id: user.id,
-      roles: user.roles,
-      migrationStatus: user.migrationStatus as any
+      roles: JSON.stringify(userRoles),
+      migrationStatus: user.migrationStatus as any,
     });
+    console.log('Tokens generated successfully');
 
-    // Log the login activity
+    console.log('Generated tokens for user:', user.id, 'roles:', userRoles);
+
+    // Update last login timestamp
     try {
-      await logUserActivity(user.id, 'User Login', `Logged in from ${request.headers.get('x-forwarded-for') || 'unknown IP'}`);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lastLogin: new Date() }
+      });
     } catch (error) {
-      console.error('Failed to log login activity:', error);
+      console.error('Failed to update last login:', error);
     }
 
     return NextResponse.json({
       message: 'Login successful',
-      user: user,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: user.role,
+        roles: userRoles,
+      },
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
     }, { status: 200 });
 
   } catch (error: any) {
     console.error('Login error:', error);
+    console.error('Error stack:', error.stack);
     return NextResponse.json({ error: 'Login failed' }, { status: 500 });
   }
 }

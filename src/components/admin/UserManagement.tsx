@@ -43,7 +43,10 @@ const UserManagement: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
 
     const fetchUsers = useCallback(async () => {
-        if (!user || !user.accessToken) return;
+        if (!user || !user.accessToken) {
+            setIsLoading(false);
+            return;
+        }
         try {
             const response = await fetch('/api/admin/users', {
                 headers: { 'Authorization': `Bearer ${user.accessToken}` }

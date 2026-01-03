@@ -2,6 +2,7 @@
 
 import React, { useMemo, useCallback, useEffect, useState } from 'react';
 import { Clock, CheckCircle, XCircle, Trash2, ArrowUpDown, Filter, DollarSign, Wallet, Shield, RefreshCw, TrendingUp, TrendingDown, Eye, AlertTriangle, History } from 'lucide-react';
+import { useAuthFetch } from '../../lib/authFetch';
 
 type Portfolio = {
   balance: number;
@@ -240,6 +241,7 @@ const TransactionItem: React.FC<{ transaction: TransactionHistory; onViewDetails
 
 // OrdersPage Component
 const OrdersPage: React.FC = () => {
+  const authFetch = useAuthFetch();
   const [activeSection, setActiveSection] = useState('overview');
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -263,34 +265,33 @@ const OrdersPage: React.FC = () => {
   // Fetch data from new unified API
   const fetchData = useCallback(async (userId?: string) => {
     try {
-      const token = localStorage.getItem('accessToken');
-      if (!token) {
-        // Set empty data to show proper "not logged in" message
-        setPortfolio(null);
-        setOrders([]);
-        setRequests([]);
-        setTransactionHistory([]);
-        setIsLoading(false);
-        return;
-      }
-
-      const headers = { 'Authorization': `Bearer ${token}` };
       const url = userId ? `/api/portfolio-transactions?userId=${userId}` : '/api/portfolio-transactions';
-      const response = await fetch(url, { headers });
+      const res = await authFetch(url);
 
-      if (response.ok) {
-        const data = await response.json();
+      if (res.ok) {
+        const data = res.data;
         setPortfolio(data.portfolio);
         setOrders(data.orders || []);
         setRequests(data.requests || []);
         setTransactionHistory(data.transactionHistory || []);
+      } else {
+        // Set empty data on error
+        setPortfolio(null);
+        setOrders([]);
+        setRequests([]);
+        setTransactionHistory([]);
       }
     } catch (error) {
       console.error('Failed to fetch data:', error);
+      // Set empty data on error
+      setPortfolio(null);
+      setOrders([]);
+      setRequests([]);
+      setTransactionHistory([]);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [authFetch]);
 
   useEffect(() => {
     fetchData();

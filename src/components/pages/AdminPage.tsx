@@ -1,23 +1,27 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, Suspense } from 'react';
 import {
   Shield, Users, Activity, Ban, PlusCircle, MinusCircle,
   Search, Check, X, Trash2, Wallet, ArrowUpRight,
-  History, PieChart, ShieldAlert, TrendingUp, DollarSign
+  History, PieChart, ShieldAlert, TrendingUp, DollarSign, RefreshCw
 } from 'lucide-react';
 import ProtectedRoute from '../ProtectedRoute';
-import TransactionRequests from '../admin/TransactionRequests';
-import ChatSupport from '../admin/ChatSupport';
-import { safeFetch } from '../../lib/safeFetch';
-import { User as FirestoreUser } from '../../lib/firestore-db';
+import { useAuthFetch } from '../../lib/authFetch';
+
+// Lazy load admin components
+const TransactionRequests = React.lazy(() => import('../admin/TransactionRequests'));
+const ChatSupport = React.lazy(() => import('../admin/ChatSupport'));
+const TradesManagement = React.lazy(() => import('../admin/TradesManagement'));
 
 // --- Types ---
 interface Asset {
+  id: string;
   symbol: string;
   quantity: number;
   currentPrice: number;
   averagePrice: number;
+  locked?: boolean;
 }
 
 interface ClientUser {
@@ -28,6 +32,8 @@ interface ClientUser {
   assets: Asset[];
   totalWithdrawn: number;
   totalDeposited: number;
+  activeTrades: number;
+  orders: any[]; // Active orders
   status: 'active' | 'inactive' | 'banned';
   joinedDate: string;
 }
@@ -40,7 +46,10 @@ const ClientProfileDrawer: React.FC<{
   onRestore: () => void;
   onCredit: () => void;
   onStatusChange: () => void;
-}> = ({ user, onClose, onSeize, onRestore, onCredit, onStatusChange }) => {
+  onResolve: (assetId: string, outcome: 'win' | 'loss') => void;
+  onLock: (assetId: string, locked: boolean) => void;
+}> = ({ user, onClose, onSeize, onRestore, onCredit, onStatusChange, onResolve, onLock }) => {
+  const activeOrders = user.orders || [];
 
   const totalCryptoValue = useMemo(() =>
     user.assets.reduce((sum, a) => sum + (a.quantity * a.currentPrice), 0)
@@ -49,10 +58,10 @@ const ClientProfileDrawer: React.FC<{
   const netWorth = user.balance + totalCryptoValue;
 
   return (
-    <div className="fixed inset-y-0 right-0 w-full max-w-lg bg-white dark:bg-[#0f1117] shadow-[0_0_50px_rgba(0,0,0,0.3)] z-[100] border-l dark:border-gray-800 animate-in slide-in-from-right duration-300">
+    <div className="fixed inset-y-0 right-0 w-full max-w-lg bg-white dark:bg-[#0f1117] shadow-[0_0_50px_rgba(0,0,0,0.3)] z-[100] border-l dark:border-gray-800 animate-in slide-in-from-right duration-300 md:max-w-lg">
       <div className="flex flex-col h-full">
         {/* Profile Header */}
-        <div className="flex items-center justify-between p-8 border-b dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/20">
+        <div className="flex items-center justify-between p-4 border-b md:p-8 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/20">
           <div className="flex items-center gap-4">
             <div className="flex items-center justify-center text-xl font-black text-white bg-indigo-600 shadow-lg w-14 h-14 rounded-2xl shadow-indigo-500/20">
               {user.name.charAt(0)}
@@ -67,14 +76,14 @@ const ClientProfileDrawer: React.FC<{
           </button>
         </div>
 
-        <div className="flex-1 p-8 space-y-10 overflow-y-auto custom-scrollbar">
+        <div className="flex-1 p-4 space-y-6 overflow-y-auto md:p-8 md:space-y-10 custom-scrollbar">
           {/* Net Worth Highlight */}
-          <div className="relative overflow-hidden p-8 bg-indigo-600 rounded-[2rem] text-white shadow-xl shadow-indigo-500/20">
+          <div className="relative overflow-hidden p-6 md:p-8 bg-indigo-600 rounded-[2rem] text-white shadow-xl shadow-indigo-500/20">
             <div className="relative z-10">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">Estimated Net Worth</p>
-              <h3 className="mt-1 text-4xl font-black">${netWorth.toLocaleString()}</h3>
+              <h3 className="mt-1 text-3xl font-black md:text-4xl">${netWorth.toLocaleString()}</h3>
             </div>
-            <TrendingUp className="absolute w-32 h-32 -right-4 -bottom-4 opacity-10" />
+            <TrendingUp className="absolute w-24 h-24 md:w-32 md:h-32 -right-4 -bottom-4 opacity-10" />
           </div>
 
           {/* Quick Stats Grid */}
@@ -100,25 +109,88 @@ const ClientProfileDrawer: React.FC<{
                 <span className="text-sm font-black text-indigo-500">${user.balance.toLocaleString()}</span>
               </div>
 
-              {user.assets.map((asset) => (
-                <div key={asset.symbol + asset.quantity} className="flex items-center justify-between p-5 transition-all bg-white border dark:bg-gray-900 rounded-2xl dark:border-gray-800 hover:border-rose-500/50 group">
-                  <div>
-                    <p className="text-sm font-black dark:text-white">{asset.symbol.replace('USDT','')}</p>
-                    <p className="text-[10px] text-gray-500 font-bold">{asset.quantity.toLocaleString()} Tokens @ ${asset.currentPrice.toLocaleString()}</p>
+              {user.assets.map((asset) => {
+                const isBinary = asset.symbol.startsWith('BINARY-');
+                return (
+                  <div key={asset.symbol + asset.quantity} className="flex flex-col p-4 transition-all bg-white border md:flex-row md:items-center md:justify-between md:p-5 dark:bg-gray-900 rounded-2xl dark:border-gray-800 hover:border-rose-500/50 group">
+                    <div className="flex-1">
+                      <p className="text-sm font-black dark:text-white">{asset.symbol.replace('USDT','').replace('BINARY-','Binary ')}</p>
+                      <p className="text-[10px] text-gray-500 font-bold">{asset.quantity.toLocaleString()} {isBinary ? 'Position' : 'Tokens'} @ ${asset.currentPrice.toLocaleString()}</p>
+                      {asset.locked && <p className="text-[9px] text-orange-500 font-bold">LOCKED</p>}
+                    </div>
+                    <div className="flex items-center justify-between mt-2 md:mt-0">
+                      <p className="text-sm font-black dark:text-white">${(asset.quantity * asset.currentPrice).toLocaleString()}</p>
+                      <div className="flex ml-4 space-x-1 md:space-x-2">
+                        {isBinary ? (
+                          <>
+                            <button
+                              onClick={() => onResolve(asset.id, 'win')}
+                              className="text-[9px] font-black text-green-500 uppercase px-2 py-1 rounded"
+                            >
+                              Win
+                            </button>
+                            <button
+                              onClick={() => onResolve(asset.id, 'loss')}
+                              className="text-[9px] font-black text-red-500 uppercase px-2 py-1 rounded"
+                            >
+                              Loss
+                            </button>
+                            <button
+                              onClick={() => onLock(asset.id, asset.locked || false)}
+                              className="text-[9px] font-black text-blue-500 uppercase px-2 py-1 rounded"
+                            >
+                              {asset.locked ? 'Unlock' : 'Lock'}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => onSeize(asset.symbol)}
+                            className="text-[9px] font-black text-rose-500 uppercase px-2 py-1 rounded"
+                          >
+                            Seize
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-black dark:text-white">${(asset.quantity * asset.currentPrice).toLocaleString()}</p>
-                    <button
-                      onClick={() => onSeize(asset.symbol)}
-                      className="text-[9px] font-black text-rose-500 uppercase opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      Seize Asset
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
+
+          {/* Active Trades */}
+          {activeOrders.length > 0 && (
+            <div>
+              <h4 className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">
+                <Activity size={14} /> Active Trades
+              </h4>
+              <div className="space-y-3">
+                {activeOrders.map((order) => (
+                  <div key={order.id} className="p-5 bg-white border dark:bg-gray-900 rounded-2xl dark:border-gray-800">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-black dark:text-white">{order.symbol}</span>
+                      <span className={`px-2 py-1 text-xs font-black rounded ${order.type === 'buy' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
+                        {order.type.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-gray-500 font-bold">
+                      Quantity: {order.quantity} | Price: ${order.price} | Status: {order.status}
+                    </div>
+                    {order.orderType && (
+                      <div className="text-[10px] text-gray-500 font-bold">
+                        Order Type: {order.orderType}
+                      </div>
+                    )}
+                    {order.leverage && (
+                      <div className="text-[10px] text-gray-500 font-bold">
+                        Leverage: {order.leverage}x
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Admin Command Center */}
           <div className="space-y-3">
@@ -152,79 +224,67 @@ const ClientProfileDrawer: React.FC<{
 
 // --- Main Page ---
 const AdminPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'users' | 'requests' | 'chats'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'requests' | 'chats' | 'trades'>('users');
   const [selectedUser, setSelectedUser] = useState<ClientUser | null>(null);
   const [search, setSearch] = useState('');
+  
+  // State for real data
+  const [users, setUsers] = useState<ClientUser[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
+  const [userError, setUserError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const authFetch = useAuthFetch();
 
   // Fetch users data
-  const fetchUsers = useCallback(async () => {
+  const fetchUsers = useCallback(async (forceRefresh = false) => {
     setIsLoadingUsers(true);
     setUserError(null);
+    if (forceRefresh) setRefreshing(true);
 
     try {
-      const token = localStorage.getItem('accessToken');
-      if (!token) {
-        setUserError('No authentication token found');
-        return;
-      }
-
-      const res = await safeFetch('/api/admin/users', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await authFetch(`/api/admin/users?includeDetails=true${forceRefresh ? '&noCache=true&_t=' + Date.now() : ''}`);
 
       if (res.ok && res.data?.users) {
-        // Transform Firestore users to ClientUser format
-        const transformedUsers: ClientUser[] = (await Promise.all(
-          res.data.users.map(async (user: FirestoreUser) => {
-            // Fetch assets for this user
-            const assetsRes = await safeFetch(`/api/portfolio?userId=${user.id}`, {
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
+        // Transform enriched users to ClientUser format
+        const transformedUsers: ClientUser[] = res.data.users.map((user: any) => {
+          const assets: Asset[] = (user.assets || []).map((asset: any) => ({
+            id: asset.id,
+            symbol: asset.symbol,
+            quantity: asset.quantity,
+            currentPrice: asset.averagePrice, // Using averagePrice as current for now
+            averagePrice: asset.averagePrice,
+            locked: asset.locked || false
+          }));
 
-            let assets: Asset[] = [];
-            if (assetsRes.ok && assetsRes.data?.assets) {
-              assets = assetsRes.data.assets.map((asset: any) => ({
-                symbol: asset.symbol,
-                quantity: asset.quantity,
-                currentPrice: asset.averagePrice, // Using averagePrice as current for now
-                averagePrice: asset.averagePrice
-              }));
-            }
+          const totalDeposited = (user.transactionHistory || [])
+            .filter((t: any) => t.type === 'deposit')
+            .reduce((sum: number, t: any) => sum + t.amount, 0);
 
-            // Fetch transaction history to calculate totals
-            const historyRes = await safeFetch(`/api/activity-log?userId=${user.id}`, {
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
+          const totalWithdrawn = (user.transactionHistory || [])
+            .filter((t: any) => t.type === 'withdraw')
+            .reduce((sum: number, t: any) => sum + t.amount, 0);
 
-            let totalDeposited = 0;
-            let totalWithdrawn = 0;
-            if (historyRes.ok && historyRes.data?.logs) {
-              historyRes.data.logs.forEach((log: any) => {
-                if (log.type === 'deposit' && log.status === 'completed') {
-                  totalDeposited += log.amount || 0;
-                } else if (log.type === 'withdraw' && log.status === 'completed') {
-                  totalWithdrawn += log.amount || 0;
-                }
-              });
-            }
+          const activeTrades = (user.orders || []).length;
 
-            return {
-              id: user.id,
-              name: user.username,
-              email: user.email,
-              balance: user.balance || 0,
-              assets,
-              totalWithdrawn,
-              totalDeposited,
-              status: (user.status as 'active' | 'inactive' | 'banned') || 'active',
-              joinedDate: user.createdAt ? new Date((user.createdAt as any).seconds * 1000).toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric'
-              }).toUpperCase() : 'Unknown'
-            };
-          })
-        )).filter(u => u.id);
+          return {
+            id: user.id,
+            name: user.username,
+            email: user.email,
+            balance: user.balance || 0,
+            assets,
+            totalWithdrawn,
+            totalDeposited,
+            activeTrades,
+            orders: user.orders || [],
+            status: (user.status as 'active' | 'inactive' | 'banned') || 'active',
+            joinedDate: user.createdAt ? new Date(user.createdAt).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric'
+            }).toUpperCase() : 'Unknown'
+          };
+        }).filter((u: any) => u.id);
 
         setUsers(transformedUsers);
       } else {
@@ -234,8 +294,9 @@ const AdminPage: React.FC = () => {
       setUserError('Connection error while loading users');
     } finally {
       setIsLoadingUsers(false);
+      setRefreshing(false);
     }
-  }, []);
+  }, [authFetch]);
 
   useEffect(() => {
     if (activeTab === 'users') {
@@ -249,12 +310,10 @@ const AdminPage: React.FC = () => {
 
     const newStatus = selectedUser.status === 'active' ? 'banned' : 'active';
     try {
-      const token = localStorage.getItem('accessToken');
-      const res = await safeFetch('/api/admin/users', {
+      const res = await authFetch('/api/admin/users', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ userId: selectedUser.id, status: newStatus })
       });
@@ -289,12 +348,10 @@ const AdminPage: React.FC = () => {
     const reason = prompt('Enter reason for balance adjustment:') || 'Admin adjustment';
 
     try {
-      const token = localStorage.getItem('accessToken');
-      const res = await safeFetch('/api/admin/balance', {
+      const res = await authFetch('/api/admin/balance', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ userId: selectedUser.id, amount, reason })
       });
@@ -317,12 +374,10 @@ const AdminPage: React.FC = () => {
     if (!confirm(`Are you sure you want to seize ${symbol} from ${selectedUser.name}?`)) return;
 
     try {
-      const token = localStorage.getItem('accessToken');
-      const res = await safeFetch('/api/admin/assets', {
+      const res = await authFetch('/api/admin/assets', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ userId: selectedUser.id, symbol })
       });
@@ -356,12 +411,10 @@ const AdminPage: React.FC = () => {
     if (!confirm(`Are you sure you want to restore ${quantity} ${symbol} to ${selectedUser.name}?`)) return;
 
     try {
-      const token = localStorage.getItem('accessToken');
-      const res = await safeFetch('/api/admin/assets', {
+      const res = await authFetch('/api/admin/assets', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ userId: selectedUser.id, symbol, quantity, price })
       });
@@ -378,10 +431,96 @@ const AdminPage: React.FC = () => {
     }
   };
 
-  // State for real data
-  const [users, setUsers] = useState<ClientUser[]>([]);
-  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
-  const [userError, setUserError] = useState<string | null>(null);
+  const handleResolveAsset = async (assetId: string, outcome: 'win' | 'loss') => {
+    if (!selectedUser) return;
+
+    if (!confirm(`Are you sure you want to resolve this binary asset as ${outcome}?`)) return;
+
+    try {
+      const res = await authFetch('/api/admin/assets/resolve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId: selectedUser.id, assetId, outcome })
+      });
+
+      if (res.ok) {
+        alert(`Successfully resolved binary asset as ${outcome}`);
+        fetchUsers(); // Refresh user data
+        setSelectedUser(null); // Close drawer
+      } else {
+        alert(res.error || 'Failed to resolve asset');
+      }
+    } catch (error) {
+      alert('Error resolving asset');
+    }
+  };
+
+  const handleBulkResolve = async (outcome: 'win' | 'loss' | 'randomize') => {
+    if (!selectedUser) return;
+
+    const binaryAssets = selectedUser.assets.filter(a => a.symbol.startsWith('BINARY-'));
+    if (binaryAssets.length === 0) {
+      alert('No binary assets to resolve');
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to resolve all ${binaryAssets.length} binary assets as ${outcome}?`)) return;
+
+    let successCount = 0;
+    for (const asset of binaryAssets) {
+      const resOutcome = outcome === 'randomize' ? (Math.random() < 0.5 ? 'win' : 'loss') : outcome;
+      try {
+        const res = await authFetch('/api/admin/assets/resolve', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId: selectedUser.id, assetId: asset.id, outcome: resOutcome })
+        });
+        if (res.ok) successCount++;
+      } catch (error) {
+        console.error('Error resolving asset', asset.id, error);
+      }
+    }
+
+    alert(`Successfully resolved ${successCount}/${binaryAssets.length} binary assets`);
+    fetchUsers(); // Refresh user data
+    setSelectedUser(null); // Close drawer
+  };
+
+  const handleLockAsset = async (assetId: string, locked: boolean) => {
+    if (!selectedUser) return;
+
+    const newLocked = !locked;
+    if (!confirm(`Are you sure you want to ${newLocked ? 'lock' : 'unlock'} this asset?`)) return;
+
+    let reason = '';
+    if (newLocked) {
+      reason = prompt('Enter reason for locking this asset:') || 'Admin lock';
+    }
+
+    try {
+      const res = await authFetch('/api/admin/assets', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId: selectedUser.id, assetId, locked: newLocked, reason })
+      });
+
+      if (res.ok) {
+        alert(`Successfully ${newLocked ? 'locked' : 'unlocked'} asset`);
+        fetchUsers(); // Refresh user data
+        setSelectedUser(null); // Close drawer
+      } else {
+        alert(res.error || 'Failed to lock/unlock asset');
+      }
+    } catch (error) {
+      alert('Error locking/unlocking asset');
+    }
+  };
 
   return (
     <ProtectedRoute requiredRole="admin">
@@ -401,10 +540,11 @@ const AdminPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex bg-white dark:bg-gray-800 p-1.5 rounded-2xl shadow-xl border dark:border-gray-700">
-            <button onClick={() => setActiveTab('users')} className={`px-8 py-3 rounded-xl text-xs font-black transition-all ${activeTab === 'users' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400'}`}>USER REGISTRY</button>
-            <button onClick={() => setActiveTab('requests')} className={`px-8 py-3 rounded-xl text-xs font-black transition-all ${activeTab === 'requests' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400'}`}>PENDING TASKS</button>
-            <button onClick={() => setActiveTab('chats')} className={`px-8 py-3 rounded-xl text-xs font-black transition-all ${activeTab === 'chats' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400'}`}>SUPPORT CHATS</button>
+          <div className="flex flex-wrap bg-white dark:bg-gray-800 p-1.5 rounded-2xl shadow-xl border dark:border-gray-700 gap-2 md:gap-0">
+            <button onClick={() => setActiveTab('users')} className={`px-4 md:px-8 py-3 rounded-xl text-xs font-black transition-all flex-1 md:flex-none ${activeTab === 'users' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400'}`}>USER REGISTRY</button>
+            <button onClick={() => setActiveTab('requests')} className={`px-4 md:px-8 py-3 rounded-xl text-xs font-black transition-all flex-1 md:flex-none ${activeTab === 'requests' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400'}`}>PENDING TASKS</button>
+            <button onClick={() => setActiveTab('trades')} className={`px-4 md:px-8 py-3 rounded-xl text-xs font-black transition-all flex-1 md:flex-none ${activeTab === 'trades' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400'}`}>TRADES</button>
+            <button onClick={() => setActiveTab('chats')} className={`px-4 md:px-8 py-3 rounded-xl text-xs font-black transition-all flex-1 md:flex-none ${activeTab === 'chats' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400'}`}>SUPPORT CHATS</button>
           </div>
         </header>
 
@@ -412,14 +552,24 @@ const AdminPage: React.FC = () => {
           {activeTab === 'users' ? (
             <div className="space-y-6 duration-700 animate-in fade-in">
               {/* Filter Bar */}
-              <div className="relative max-w-md group">
-                <Search className="absolute text-gray-400 transition-colors -translate-y-1/2 left-5 top-1/2 group-focus-within:text-indigo-500" size={20} />
-                <input
-                  type="text"
-                  placeholder="Search clients by name, email, or ID..."
-                  className="w-full pl-14 pr-6 py-5 bg-white dark:bg-gray-800 border-none rounded-[1.5rem] shadow-sm focus:ring-4 ring-indigo-500/10 text-sm font-bold dark:text-white"
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+              <div className="flex flex-col items-stretch gap-4 md:flex-row md:items-center">
+                <div className="relative flex-1 md:max-w-md group">
+                  <Search className="absolute text-gray-400 transition-colors -translate-y-1/2 left-5 top-1/2 group-focus-within:text-indigo-500" size={20} />
+                  <input
+                    type="text"
+                    placeholder="Search clients by name, email, or ID..."
+                    className="w-full pl-14 pr-6 py-4 md:py-5 bg-white dark:bg-gray-800 border-none rounded-[1.5rem] shadow-sm focus:ring-4 ring-indigo-500/10 text-sm font-bold dark:text-white"
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <button
+                  onClick={() => fetchUsers(true)}
+                  disabled={refreshing}
+                  className="flex items-center justify-center gap-2 px-4 py-3 text-white bg-indigo-600 md:py-2 rounded-xl hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                  Refresh
+                </button>
               </div>
 
               {/* Loading State */}
@@ -435,7 +585,7 @@ const AdminPage: React.FC = () => {
                 <div className="p-8 text-center border border-red-200 bg-red-50 dark:bg-red-900/20 rounded-2xl dark:border-red-800">
                   <p className="font-bold text-red-600 dark:text-red-400">{userError}</p>
                   <button
-                    onClick={fetchUsers}
+                    onClick={() => fetchUsers(true)}
                     className="px-6 py-2 mt-4 font-bold text-white bg-red-600 rounded-xl hover:bg-red-700"
                   >
                     Retry
@@ -445,14 +595,15 @@ const AdminPage: React.FC = () => {
 
               {/* User Table */}
               {!isLoadingUsers && !userError && (
-                <div className="bg-white dark:bg-gray-800 rounded-[2.5rem] shadow-2xl overflow-hidden border dark:border-gray-700">
-                  <table className="w-full text-left">
+                <div className="bg-white dark:bg-gray-800 rounded-[2.5rem] shadow-2xl overflow-hidden border dark:border-gray-700 overflow-x-auto">
+                  <table className="w-full text-left min-w-[800px]">
                     <thead className="border-b bg-gray-50/50 dark:bg-gray-900/50 dark:border-gray-700">
                       <tr>
-                        <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Client Information</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Liquid Balance</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Exposure</th>
-                        <th className="px-8 py-5 text-right text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Action</th>
+                        <th className="px-4 md:px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Client Information</th>
+                        <th className="px-4 md:px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Liquid Balance</th>
+                        <th className="px-4 md:px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Active Trades</th>
+                        <th className="px-4 md:px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Exposure</th>
+                        <th className="px-4 md:px-8 py-5 text-right text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y dark:divide-gray-700">
@@ -464,7 +615,7 @@ const AdminPage: React.FC = () => {
                         )
                         .map(user => (
                         <tr key={user.id} className="transition-all cursor-pointer hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 group" onClick={() => setSelectedUser(user)}>
-                          <td className="px-8 py-6">
+                          <td className="px-4 py-6 md:px-8">
                             <div className="flex items-center gap-4">
                               <div className="flex items-center justify-center w-10 h-10 text-xs font-black text-gray-500 transition-all bg-gray-100 rounded-xl dark:bg-gray-700 group-hover:bg-indigo-600 group-hover:text-white">
                                 {user.name.charAt(0)}
@@ -475,13 +626,18 @@ const AdminPage: React.FC = () => {
                               </div>
                             </div>
                           </td>
-                          <td className="px-8 py-6">
+                          <td className="px-4 py-6 md:px-8">
                             <div className="flex items-center gap-2">
                                <DollarSign size={14} className="text-emerald-500" />
                                <span className="font-black text-gray-900 dark:text-white">${user.balance.toLocaleString()}</span>
                             </div>
                           </td>
-                          <td className="px-8 py-6">
+                          <td className="px-4 py-6 md:px-8">
+                            <div className="flex items-center gap-2">
+                               <span className="font-black text-gray-900 dark:text-white">{user.activeTrades}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-6 md:px-8">
                             <div className="flex -space-x-2">
                               {user.assets.slice(0, 3).map((a, index) => (
                                 <div key={a.symbol} className="w-8 h-8 rounded-full border-2 border-white dark:border-gray-800 bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-[8px] font-black">
@@ -495,8 +651,8 @@ const AdminPage: React.FC = () => {
                               )}
                             </div>
                           </td>
-                          <td className="px-8 py-6 text-right">
-                            <button className="px-6 py-2.5 bg-gray-100 dark:bg-gray-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all">
+                          <td className="px-4 py-6 text-right md:px-8">
+                            <button className="px-4 md:px-6 py-2.5 bg-gray-100 dark:bg-gray-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all">
                               Manage Profile
                             </button>
                           </td>
@@ -507,10 +663,18 @@ const AdminPage: React.FC = () => {
                 </div>
               )}
             </div>
+          ) : activeTab === 'trades' ? (
+            <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="w-12 h-12 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin" /><span className="ml-4 text-lg font-bold dark:text-white">Loading...</span></div>}>
+              <TradesManagement />
+            </Suspense>
           ) : activeTab === 'chats' ? (
-            <ChatSupport />
+            <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="w-12 h-12 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin" /><span className="ml-4 text-lg font-bold dark:text-white">Loading...</span></div>}>
+              <ChatSupport />
+            </Suspense>
           ) : (
-            <TransactionRequests />
+            <Suspense fallback={<div className="flex items-center justify-center py-20"><div className="w-12 h-12 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin" /><span className="ml-4 text-lg font-bold dark:text-white">Loading...</span></div>}>
+              <TransactionRequests />
+            </Suspense>
           )}
         </main>
 
@@ -525,6 +689,8 @@ const AdminPage: React.FC = () => {
               onRestore={handleRestoreAsset}
               onCredit={handleCreditUser}
               onStatusChange={handleStatusChange}
+              onResolve={handleResolveAsset}
+              onLock={handleLockAsset}
             />
           </>
         )}

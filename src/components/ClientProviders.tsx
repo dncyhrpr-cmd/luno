@@ -4,6 +4,7 @@ import React, { useState, useMemo, createContext, useContext, useRef, useCallbac
 import { Moon, Sun, Bell, AlertTriangle, CheckCircle } from 'lucide-react';
 import '../app/intercept-console-error';
 import { AuthProvider } from '@/context/AuthContext';
+import { CoinProvider } from '@/context/CoinContext';
 
 // 1. Theme Context (Dark/Light Mode)
 interface ThemeContextType {
@@ -65,9 +66,11 @@ export default function ClientProviders({ children }: ClientProvidersProps) {
   return (
     <ThemeProvider>
         <AuthProvider>
-            <div className='min-h-screen transition-colors duration-300 bg-gray-50 dark:bg-gray-900'>
-                {children}
-            </div>
+            <CoinProvider>
+                <div className='min-h-screen transition-colors duration-300 bg-gray-50 dark:bg-gray-900'>
+                    {children}
+                </div>
+            </CoinProvider>
         </AuthProvider>
     </ThemeProvider>
   );

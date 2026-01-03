@@ -60,6 +60,30 @@ export function parsePositiveNumber(value: any, fieldName = 'value'): number {
 export function normalizeOrderPayload(raw: any) {
   if (!raw || typeof raw !== 'object') throw new ValidationError('Missing request body', 400);
 
+  // Check if it's a binary trade
+  if (raw.direction && raw.period) {
+    requireFields(raw, ['symbol', 'direction', 'period', 'amount', 'profitPercent', 'price']);
+    
+    const direction = String(raw.direction).toUpperCase();
+    if (!['UP', 'DOWN'].includes(direction)) throw new ValidationError('Invalid direction', 400, { direction });
+    
+    const period = parsePositiveNumber(raw.period, 'period');
+    const amount = parsePositiveNumber(raw.amount, 'amount');
+    const profitPercent = parsePositiveNumber(raw.profitPercent, 'profitPercent');
+    const price = parsePositiveNumber(raw.price, 'price');
+    const symbol = String(raw.symbol).toUpperCase();
+
+    return { 
+      isBinary: true, 
+      symbol, 
+      direction, 
+      period, 
+      amount, 
+      profitPercent, 
+      price 
+    } as const;
+  }
+
   requireFields(raw, ['type', 'symbol', 'quantity', 'price', 'leverage']);
 
   const type = String(raw.type).toUpperCase();
@@ -69,9 +93,30 @@ export function normalizeOrderPayload(raw: any) {
   if (!['MARKET', 'LIMIT'].includes(orderType)) throw new ValidationError('Invalid orderType', 400, { orderType });
 
   const symbol = String(raw.symbol).toUpperCase();
+  
+  // Validate symbol format
+  if (!/^[A-Z]{2,}USDT$/.test(symbol) && !/^[A-Z]{2,}$/.test(symbol)) {
+    throw new ValidationError('Invalid symbol format', 400, { symbol });
+  }
+
   const quantity = parsePositiveNumber(raw.quantity, 'quantity');
+  if (quantity > 1000000) {
+    throw new ValidationError('Order quantity too large', 400, { quantity });
+  }
+
   const price = parsePositiveNumber(raw.price, 'price');
+  if (price > 1000000) {
+    throw new ValidationError('Order price too high', 400, { price });
+  }
+
   const leverage = parsePositiveNumber(raw.leverage, 'leverage');
+  const MAX_LEVERAGE = 100;
+  if (leverage > MAX_LEVERAGE) {
+    throw new ValidationError(`Leverage cannot exceed ${MAX_LEVERAGE}x`, 400, { leverage, maxLeverage: MAX_LEVERAGE });
+  }
+  if (leverage < 1) {
+    throw new ValidationError('Leverage must be at least 1x', 400, { leverage });
+  }
 
   return { type, symbol, quantity, price, orderType, leverage } as const;
 }

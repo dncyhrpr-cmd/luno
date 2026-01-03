@@ -1,72 +1,78 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, MessageCircle } from 'lucide-react';
+import { MessageCircle, Send } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { getDb } from '@/lib/client-db';
-import { collection, addDoc, onSnapshot, query, orderBy, Timestamp, doc, setDoc } from 'firebase/firestore';
+import { useAuthFetch } from '@/lib/authFetch';
 
 interface Message {
   id: string;
+  sender: string;
   text: string;
-  sender: 'user' | 'admin';
-  timestamp: Timestamp;
+  timestamp: string;
 }
 
 const SupportPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const authFetch = useAuthFetch();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const chatRef = collection(getDb(), 'chats', user.id, 'messages');
-    const q = query(chatRef, orderBy('timestamp', 'asc'));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs: Message[] = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as Message));
-      setMessages(msgs);
+  const fetchMessages = async () => {
+    try {
+      const result = await authFetch('/api/support/messages');
+      if (result.ok && result.data) {
+        setMessages(result.data.messages || []);
+        setError(null);
+      } else if (result.status === 401) {
+        setError('Session expired. Please log in again.');
+        logout();
+      } else {
+        setError('Failed to load messages. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error fetching messages:', error);
+      setError('Network error. Please check your connection.');
+    } finally {
       setLoading(false);
-      scrollToBottom();
-    });
-
-    return () => unsubscribe();
-  }, [user?.id]);
+    }
+  };
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !user?.id) return;
+    const text = newMessage.trim();
+    if (!text || text.length > 1000) return;
 
     try {
-      const db = getDb();
-      const chatRef = collection(db, 'chats', user.id, 'messages');
-      await addDoc(chatRef, {
-        text: newMessage.trim(),
-        sender: 'user',
-        timestamp: Timestamp.now()
+      const result = await authFetch('/api/support/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
       });
 
-      // Ensure the parent chat document exists for admin panel detection
-      const parentChatRef = doc(db, 'chats', user.id);
-      await setDoc(parentChatRef, {
-        userId: user.id,
-        lastMessage: newMessage.trim(),
-        lastMessageTime: Timestamp.now(),
-        unreadCount: 1
-      }, { merge: true });
-
-      setNewMessage('');
+      if (result.ok && result.data) {
+        setMessages(prev => [...prev, result.data]);
+        setNewMessage('');
+        setError(null);
+        scrollToBottom();
+      } else if (result.status === 401) {
+        setError('Session expired. Please log in again.');
+        logout();
+      } else {
+        setError('Failed to send message. Please try again.');
+      }
     } catch (error) {
       console.error('Error sending message:', error);
+      setError('Network error. Please check your connection.');
     }
   };
 
@@ -76,6 +82,25 @@ const SupportPage: React.FC = () => {
       sendMessage();
     }
   };
+
+  useEffect(() => {
+    if (user) {
+      fetchMessages();
+
+      // Polling for new messages every 5 seconds
+      intervalRef.current = setInterval(fetchMessages, 5000);
+    }
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, [user]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
 
   if (!user) {
     return (
@@ -92,6 +117,13 @@ const SupportPage: React.FC = () => {
         <MessageCircle className="w-6 h-6 mr-3 text-blue-600" />
         <h1 className="text-xl font-semibold text-gray-900 dark:text-white">Support Chat</h1>
       </div>
+
+      {/* Error Display */}
+      {error && (
+        <div className="p-4 mx-4 border border-red-200 rounded-lg bg-red-50">
+          <p className="text-sm text-red-600">{error}</p>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 p-4 space-y-4 overflow-y-auto">
@@ -118,7 +150,7 @@ const SupportPage: React.FC = () => {
               >
                 <p className="text-sm">{message.text}</p>
                 <p className="mt-1 text-xs opacity-70">
-                  {message.timestamp.toDate().toLocaleTimeString()}
+                  {new Date(message.timestamp).toLocaleTimeString()}
                 </p>
               </div>
             </div>
@@ -140,7 +172,7 @@ const SupportPage: React.FC = () => {
           />
           <button
             onClick={sendMessage}
-            disabled={!newMessage.trim()}
+            disabled={!newMessage.trim() || newMessage.length > 1000}
             className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="w-5 h-5" />

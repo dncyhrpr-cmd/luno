@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Simple in-memory cache for historical data
+const klineCache = new Map<string, { data: any; timestamp: number }>();
+const CACHE_DURATION = 30 * 1000; // 30 seconds
+
 function generateSyntheticKlines(symbol: string, interval: string, limit: number, anchorPrice: number = 0): any[] {
     const now = Date.now();
     const intervalMs: Record<string, number> = {
@@ -70,6 +74,15 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '200');
 
     if (symbol) {
+        // Check cache
+        const cacheKey = `${symbol}-${interval}-${limit}`;
+        const cached = klineCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
+            return NextResponse.json(cached.data, {
+                headers: { 'X-Cache': 'HIT' }
+            });
+        }
+
         // Fetch historical klines for the symbol
         try {
             const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
@@ -117,6 +130,11 @@ export async function GET(request: NextRequest) {
                 };
             });
             console.log(`[Binance API] Successfully fetched ${formattedKlines.length} klines for ${symbol}`);
+            
+            // Store in cache
+            const cacheKey = `${symbol}-${interval}-${limit}`;
+            klineCache.set(cacheKey, { data: formattedKlines, timestamp: Date.now() });
+            
             return NextResponse.json(formattedKlines);
         } catch (error: any) {
             const errorMessage = error?.message || String(error);

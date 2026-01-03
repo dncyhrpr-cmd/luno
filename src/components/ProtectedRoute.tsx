@@ -16,7 +16,7 @@ interface ProtectedRouteProps {
 // In a real app, this would be a custom Tailwind/Lottie component.
 const LoadingSpinner: React.FC = () => (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 dark:bg-gray-900">
-        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-indigo-500"></div>
+        <div className="w-16 h-16 border-t-4 border-b-4 border-indigo-500 rounded-full animate-spin"></div>
         <p className="mt-4 text-lg font-medium text-gray-700 dark:text-gray-300">Checking credentials...</p>
     </div>
 );
@@ -43,26 +43,25 @@ return <LoginPage />; // Pass current path for post-login redirect
 }
     
     // 3. Handle Authorization Check (Logged In but wrong role)
-    if (requiredRole && user?.role !== requiredRole) {
+    if (requiredRole && !user?.roles?.includes(requiredRole)) {
         const roleCheckFailed = true;
 
         if (roleCheckFailed) {
-            // Note: In a real app, you would compare user.role against requiredRole
-            
+            // Check if user has the required role in their roles array
             addNotification(`Access Denied: You need the "${requiredRole}" role to view this page.`, 'error');
             
             // Redirect to a dashboard or unauthorized page instead of the login page
             // Since we can't use React Router's Navigate, we render a static error page.
             return (
-                <div className="flex flex-col items-center justify-center min-h-screen bg-red-50 dark:bg-red-900/10 p-8">
-                    <AlertTriangle className='w-12 h-12 text-red-500 mb-4' />
+                <div className="flex flex-col items-center justify-center min-h-screen p-8 bg-red-50 dark:bg-red-900/10">
+                    <AlertTriangle className='w-12 h-12 mb-4 text-red-500' />
                     <h2 className="text-2xl font-bold text-red-700 dark:text-red-400">403 - Forbidden Access</h2>
                     <p className="mt-2 text-gray-700 dark:text-gray-300">
                         You do not have the necessary permissions to view this resource.
                     </p>
                     <a 
                         href="/" 
-                        className="mt-6 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                        className="px-4 py-2 mt-6 text-white transition bg-indigo-600 rounded-lg hover:bg-indigo-700"
                     >
                         Go to Dashboard
                     </a>

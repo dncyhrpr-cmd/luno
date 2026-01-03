@@ -1,30 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FirestoreDatabase } from '../../../../lib/firestore-db';
-import { getRequestId, handleApiError, structuredLog } from '../../../../lib/correlation';
-import { extractTokenFromRequest, verifyAccessToken, AuthTokenPayload } from '../../../../lib/auth-utils';
-
-const firestoreDB = new FirestoreDatabase();
-
-// Middleware to verify admin privileges
-async function verifyAdmin(request: NextRequest, reqId: string): Promise<AuthTokenPayload | null> {
-    const token = extractTokenFromRequest(request);
-    if (!token) {
-        structuredLog('WARN', reqId, 'Unauthorized: Missing token for admin balance action', { status: 401 });
-        return null;
-    }
-
-    try {
-        const payload = await verifyAccessToken(token);
-        if (!payload.roles?.includes('admin')) {
-            structuredLog('WARN', reqId, 'Forbidden: User is not an admin', { userId: payload.userId, status: 403 });
-            return null;
-        }
-        return payload;
-    } catch (error: any) {
-        structuredLog('WARN', reqId, 'Auth token error on admin balance action', { error: error.message, status: 401 });
-        return null;
-    }
-}
+import { prisma } from '@/lib/db';
+import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
+import { verifyAdmin } from '@/lib/auth-utils';
 
 // POST - Admin direct balance update (credit/debit)
 export async function POST(request: NextRequest) {
@@ -47,7 +24,7 @@ export async function POST(request: NextRequest) {
         structuredLog('INFO', reqId, 'Admin balance update requested', { adminId: adminPayload.userId, targetUserId: userId, amount, reason });
 
         // Get current user balance
-        const user = await firestoreDB.findUserById(userId);
+        const user = await prisma.user.findUnique({ where: { id: userId } });
         if (!user) {
             return NextResponse.json({ error: 'User not found', correlationId: reqId }, { status: 404 });
         }
@@ -58,32 +35,37 @@ export async function POST(request: NextRequest) {
         }
 
         // Update balance
-        await firestoreDB.updateUserBalance(userId, newBalance);
+        await prisma.user.update({ where: { id: userId }, data: { balance: newBalance } });
 
         // Create transaction history
-        await firestoreDB.createTransactionHistory({
-            userId,
-            type: amount > 0 ? 'deposit' : 'withdraw',
-            amount: Math.abs(amount),
-            description: `Admin ${amount > 0 ? 'credit' : 'debit'}: ${reason || 'Manual adjustment'}`,
-            status: 'completed',
-            balanceBefore: user.balance,
-            balanceAfter: newBalance,
+        await prisma.transactionHistory.create({
+            data: {
+                userId,
+                type: amount > 0 ? 'deposit' : 'withdrawal',
+                amount: Math.abs(amount),
+                description: `Admin ${amount > 0 ? 'credit' : 'debit'}: ${reason || 'Manual adjustment'}`,
+                status: 'completed',
+                balanceBefore: user.balance,
+                balanceAfter: newBalance,
+            }
         });
 
         // Create audit log
-        await firestoreDB.createAuditLog({
-            adminId: adminPayload.userId,
-            action: 'balance_update',
-            resourceType: 'user_balance',
-            resourceId: userId,
-            changes: {
-                amount,
-                reason: reason || 'Manual adjustment',
-                balanceBefore: user.balance,
-                balanceAfter: newBalance
-            },
-            status: 'success'
+        await prisma.auditLog.create({
+            data: {
+                userId,
+                adminId: adminPayload.userId,
+                action: 'balance_update',
+                resourceType: 'user_balance',
+                resourceId: userId,
+                changes: JSON.stringify({
+                    amount,
+                    reason: reason || 'Manual adjustment',
+                    balanceBefore: user.balance,
+                    balanceAfter: newBalance
+                }),
+                status: 'success'
+            }
         });
 
         structuredLog('INFO', reqId, 'Admin balance update completed', { adminId: adminPayload.userId, targetUserId: userId, amount, newBalance });

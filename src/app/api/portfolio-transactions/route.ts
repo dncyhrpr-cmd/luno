@@ -1,64 +1,90 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FirestoreDatabase } from '@/lib/firestore-db';
+import { PrismaClient } from '@prisma/client';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
 
-const firestoreDB = new FirestoreDatabase();
+const prisma = new PrismaClient();
 
-// GET - Fetch user's complete portfolio and transactions data
 export async function GET(request: NextRequest) {
-  console.log('Portfolio-transactions API called');
   try {
     const token = extractTokenFromRequest(request);
     if (!token) {
-      console.log('No token found');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const payload = await verifyAccessToken(token);
-    const url = new URL(request.url);
-    const requestedUserId = url.searchParams.get('userId');
-    const userId = requestedUserId || payload.userId;
+    const userId = payload.userId;
 
-    // Check if user is admin to allow viewing other users
-    if (requestedUserId) {
-      const currentUser = await firestoreDB.findUserById(payload.userId);
-      if (!currentUser || !currentUser.roles.includes('admin')) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-      }
-    }
-
-    // Fetch all data in parallel
-    const [user, assets, orders, requests, transactionHistory] = await Promise.all([
-      firestoreDB.findUserById(userId),
-      firestoreDB.getAssets(userId),
-      firestoreDB.getOrders(userId),
-      firestoreDB.getUserRequests(userId),
-      firestoreDB.getTransactionHistory(userId),
+    // Fetch user data
+    const [user, activeBinaryOrders] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          assets: true,
+          orders: {
+            orderBy: { createdAt: 'desc' }
+          },
+          transactionRequests: {
+            orderBy: { createdAt: 'desc' }
+          },
+          transactionHistory: {
+            orderBy: { createdAt: 'desc' }
+          }
+        }
+      }),
+      prisma.order.findMany({
+        where: {
+          userId,
+          status: 'active',
+          orderType: 'binary'
+        }
+      })
     ]);
 
     if (!user) {
-      return NextResponse.json({ error: 'User not found.' }, { status: 404 });
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    const totalAssetValue = assets.reduce((sum, asset) => sum + (asset.quantity * asset.averagePrice), 0);
-    const totalPortfolioValue = user.balance + totalAssetValue;
+    // Create temporary assets from active binary orders
+    const tempAssets = activeBinaryOrders.map(order => ({
+      id: `temp-${order.id}`,
+      userId: order.userId,
+      symbol: `BINARY-${order.id}`,
+      quantity: 1,
+      averagePrice: order.amount || 0,
+      currentPrice: order.amount || 0,
+      createdAt: order.createdAt,
+    }));
 
-    return NextResponse.json({
+    const allAssets = [...user.assets, ...tempAssets];
+
+    // Calculate total portfolio value
+    const totalPortfolioValue = user.balance + allAssets.reduce((sum, asset) => {
+      const price = asset.currentPrice || asset.averagePrice;
+      return sum + (asset.quantity * price);
+    }, 0);
+
+    const portfolio = {
+      balance: user.balance,
+      assets: user.assets,
+      totalPortfolioValue
+    };
+
+    const response = {
       portfolio: {
-        balance: user.balance,
-        assets,
-        totalPortfolioValue,
+        ...portfolio,
+        assets: allAssets
       },
-      orders,
-      requests,
-      transactionHistory,
-    });
+      orders: user.orders,
+      requests: user.transactionRequests,
+      transactionHistory: user.transactionHistory
+    };
 
+    return NextResponse.json(response);
   } catch (error: any) {
-    console.error('API Error:', error);
     if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to fetch portfolio and transactions' }, { status: 500 });
+    console.error('Portfolio transactions fetch error:', error);
+    return NextResponse.json({ error: 'Failed to fetch portfolio transactions' }, { status: 500 });
   }
 }

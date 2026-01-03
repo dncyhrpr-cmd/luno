@@ -8,8 +8,9 @@ import {
 } from 'lucide-react';
 import { CoinIcon } from '../CoinIcons';
 import { useAuth } from '../../context/AuthContext';
+import { useCoin } from '../../context/CoinContext';
 import { useBinanceWebSocket } from '../../hooks/useBinanceWebSocket';
-import { safeFetch } from '../../lib/safeFetch';
+import { useAuthFetch } from '../../lib/authFetch';
 
 // --- UTILITY HOOK --- 
 function usePrevious<T>(value: T) {
@@ -28,6 +29,7 @@ interface CryptoCoin {
     price: number;
     change: number;
     volume: number;
+    image?: string;
 }
 
 // --- TYPES ---
@@ -46,6 +48,7 @@ interface CoinRowProps {
     coin: CryptoCoin;
     sparklineHistory?: number[];
     isUpdating?: boolean;
+    onClick?: (coin: CryptoCoin) => void;
 }
 
 interface TimeFrameSelectorProps {
@@ -58,6 +61,10 @@ interface SortButtonProps {
     label: string;
     currentSort: { key: string; order: string };
     handleSort: (key: string) => void;
+}
+
+interface HomePageProps {
+    onNavigate?: (page: any) => void;
 }
 
 // --- CRYPTO COIN MAPPING ---
@@ -121,19 +128,19 @@ const Sparkline: React.FC<SparklineProps> = React.memo(({ history }) => {
 
 Sparkline.displayName = 'Sparkline';
 
-const CoinRow: React.FC<CoinRowProps> = React.memo(({ coin, sparklineHistory = [], isUpdating = false }) => {
+const CoinRow: React.FC<CoinRowProps> = React.memo(({ coin, sparklineHistory = [], isUpdating = false, onClick }) => {
     const isPositive = coin.change >= 0;
     const ChangeIcon = isPositive ? ArrowUp : ArrowDown;
     const history = sparklineHistory.length > 0 ? sparklineHistory : [coin.price * 0.98, coin.price * 0.99, coin.price, coin.price * 1.01, coin.price * 1.02, coin.price * 1.01, coin.price];
 
     return (
-        <div className={`grid items-center grid-cols-1 p-4 md:grid-cols-12 md:p-4 py-4 transition-all duration-300 border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/50 last:border-b-0 ${
+        <div className={`grid items-center grid-cols-1 p-4 md:grid-cols-12 md:p-4 py-4 transition-all duration-300 border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/50 last:border-b-0 cursor-pointer ${
             isUpdating ? 'bg-yellow-50 dark:bg-yellow-900/20' : ''
-        }`}>
+        }`} onClick={() => onClick && onClick(coin)}>
             <div className="flex items-center md:col-span-3">
                 <div className="mr-2 text-sm text-gray-500 md:hidden dark:text-gray-400">Asset:</div>
                 <div className="flex items-center space-x-4">
-                    <CoinIcon symbol={coin.symbol} size={40} className="shrink-0" />
+                    <CoinIcon symbol={coin.symbol} src={coin.image} size={40} className="shrink-0" />
                     <div>
                         <p className="text-lg font-semibold text-gray-900 dark:text-white">{coin.symbol}</p>
                         <p className="text-sm text-gray-500 dark:text-gray-400">{coin.name}</p>
@@ -211,21 +218,12 @@ SortButton.displayName = 'SortButton';
 
 
 // --- MAIN APP COMPONENT ---
-export default function App() {
+export default function App({ onNavigate }: HomePageProps) {
     const router = useRouter();
-    const { user, isAuthenticated } = useAuth();
-    const [coins, setCoins] = useState<CryptoCoin[]>([
-        { id: 'btc', name: 'Bitcoin', symbol: 'BTC', price: 95000, change: 2.5, volume: 1500000 },
-        { id: 'eth', name: 'Ethereum', symbol: 'ETH', price: 3200, change: -1.2, volume: 800000 },
-        { id: 'sol', name: 'Solana', symbol: 'SOL', price: 180, change: 5.8, volume: 200000 },
-        { id: 'bnb', name: 'Binance Coin', symbol: 'BNB', price: 650, change: 1.1, volume: 100000 },
-        { id: 'ada', name: 'Cardano', symbol: 'ADA', price: 0.85, change: -0.5, volume: 50000 },
-        { id: 'doge', name: 'Dogecoin', symbol: 'DOGE', price: 0.32, change: 3.2, volume: 30000 },
-        { id: 'xrp', name: 'Ripple', symbol: 'XRP', price: 1.15, change: 0.8, volume: 40000 },
-        { id: 'ltc', name: 'Litecoin', symbol: 'LTC', price: 125, change: -2.1, volume: 20000 },
-        { id: 'matic', name: 'Polygon', symbol: 'MATIC', price: 1.85, change: 4.5, volume: 25000 },
-        { id: 'link', name: 'Chainlink', symbol: 'LINK', price: 18.5, change: 1.8, volume: 15000 },
-    ]);
+    const { user, isAuthenticated, logout } = useAuth();
+    const { setSelectedCoin } = useCoin();
+    const authFetch = useAuthFetch();
+    const [coins, setCoins] = useState<CryptoCoin[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [timeFrame, setTimeFrame] = useState('24h');
@@ -234,44 +232,51 @@ export default function App() {
     const [portfolio, setPortfolio] = useState<any>(null);
     const [portfolioLoading, setPortfolioLoading] = useState(true);
     const [updatingSymbols, setUpdatingSymbols] = useState<Set<string>>(new Set());
+    const hasEncountered401 = useRef(false);
 
-    const symbols = useMemo(() => ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'ADAUSDT', 'DOGEUSDT', 'XRPUSDT', 'LTCUSDT', 'MATICUSDT', 'LINKUSDT'], []);
+    // Extract symbols from coins for WebSocket subscription
+    const symbols = useMemo(() => coins.map(c => c.symbol).sort(), [coins.map(c => c.symbol).sort().join(',')]);
     const { prices: wsLivePrices, isConnected } = useBinanceWebSocket(symbols);
     const prevCoins = usePrevious(coins);
 
     // Fetch portfolio data
     const fetchPortfolio = useCallback(async () => {
-        if (!isAuthenticated || !user) {
+        if (!isAuthenticated || !user || hasEncountered401.current) {
             setPortfolioLoading(false);
             return;
         }
 
-            try {
-                const token = localStorage.getItem('accessToken');
-                if (!token) {
-                    setPortfolioLoading(false);
-                    return;
-                }
-
-
-                const res = await safeFetch('/api/portfolio', { headers: { 'Authorization': `Bearer ${token}` } }, 2, 700);
-                if (res.ok) {
-                    setPortfolio(res.data);
+        try {
+            const res = await authFetch('/api/portfolio', {}, 2, 700);
+            if (res.ok) {
+                setPortfolio(res.data);
+            } else {
+                if (res.status === 401) {
+                    hasEncountered401.current = true;
                 } else {
                     console.error('Home fetchPortfolio error:', res.error, 'status:', res.status);
                 }
-            } catch (error: any) {
-                console.error('Error fetching portfolio:', error);
-            } finally {
-                setPortfolioLoading(false);
             }
-    }, [isAuthenticated, user]);
+        } catch (error: any) {
+            console.error('Error fetching portfolio:', error);
+        } finally {
+            setPortfolioLoading(false);
+        }
+    }, [isAuthenticated, user, authFetch]);
 
     useEffect(() => {
+        if (!isAuthenticated) return;
         fetchPortfolio();
         const interval = setInterval(fetchPortfolio, 30000);
         return () => clearInterval(interval);
-    }, [fetchPortfolio]);
+    }, [fetchPortfolio, isAuthenticated]);
+
+    // Reset 401 flag when authentication changes
+    useEffect(() => {
+        if (isAuthenticated) {
+            hasEncountered401.current = false;
+        }
+    }, [isAuthenticated]);
 
     // Listen for portfolio updates triggered elsewhere in the app
     useEffect(() => {
@@ -288,43 +293,46 @@ export default function App() {
         };
     }, [fetchPortfolio]);
 
-    // Fetch initial crypto data
-    useEffect(() => {
-        const fetchCryptoData = async () => {
-            try {
-                const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'ADAUSDT', 'DOGEUSDT', 'XRPUSDT', 'LTCUSDT', 'MATICUSDT', 'LINKUSDT'];
-                const responses = await Promise.all(symbols.map(symbol => fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)));
-                const data = await Promise.all(responses.map(res => res.json()));
-
-                const formattedCoins = data.map((item: any) => {
-                    const rawSymbol = item?.symbol || '';
-                    const baseSymbol = rawSymbol.replace(/USDT$/i, '').replace(/USD$/i, '');
-                    const mapping = coinMapping[baseSymbol] || { id: (baseSymbol || rawSymbol).toLowerCase(), name: baseSymbol || rawSymbol };
-
-                    const price = Number(item?.lastPrice) || 0;
-                    const change = Number(item?.priceChangePercent) || 0;
-                    const volume = Number(item?.volume) || 0;
-
-                    return {
-                        id: mapping.id,
-                        name: mapping.name,
-                        symbol: baseSymbol || rawSymbol,
-                        price,
-                        change,
-                        volume
-                    };
-                });
-
-                setCoins(formattedCoins);
-                setIsLoading(false);
-            } catch (error: any) {
-                console.error('Error fetching crypto data:', error);
-                setIsLoading(false);
+    // Fetch initial crypto data from /api/coins
+    const fetchCryptoData = useCallback(async () => {
+        try {
+            const response = await fetch('/api/coins');
+            if (!response.ok) {
+                throw new Error('Failed to fetch coins');
             }
-        };
+            const data = await response.json();
+            
+            // Map API data to component state
+            // API returns: { id, symbol, name, image, current_price, market_cap, price_change_percentage_24h, total_volume }
+            const formattedCoins: CryptoCoin[] = (data.coins || []).map((coin: any) => ({
+                id: coin.id,
+                name: coin.name,
+                symbol: coin.symbol, // e.g. "BTC"
+                price: Number(coin.current_price) || 0,
+                change: Number(coin.price_change_percentage_24h) || 0,
+                volume: Number(coin.total_volume) || 0,
+                image: coin.image
+            }));
 
-        fetchCryptoData();
+            setCoins(formattedCoins);
+            setIsLoading(false);
+        } catch (error: any) {
+            console.error('Error fetching crypto data:', error);
+            setIsLoading(false);
+        }
     }, []);
+
+    useEffect(() => {
+        fetchCryptoData();
+    }, [fetchCryptoData]);
+
+    // Poll for crypto data if WebSocket is not connected
+    useEffect(() => {
+        if (!isConnected) {
+            const interval = setInterval(fetchCryptoData, 30000); // Poll every 30 seconds
+            return () => clearInterval(interval);
+        }
+    }, [isConnected, fetchCryptoData]);
 
     // Update coin data from WebSocket
     useEffect(() => {
@@ -415,6 +423,13 @@ export default function App() {
         router.push(`/learn?topic=${topic}`);
     }, [router]);
 
+    const handleCoinClick = useCallback((coin: CryptoCoin) => {
+        setSelectedCoin(coin);
+        if (onNavigate) {
+            onNavigate('Market');
+        }
+    }, [setSelectedCoin, onNavigate]);
+
     // Filtered and sorted coins
     const filteredAndSortedCoins = useMemo(() => {
         const filtered = coins.filter(coin =>
@@ -423,8 +438,8 @@ export default function App() {
         );
 
         return filtered.sort((a: CryptoCoin, b: CryptoCoin) => {
-            const aValue = a[sort.key as keyof CryptoCoin];
-            const bValue = b[sort.key as keyof CryptoCoin];
+            const aValue = a[sort.key as keyof CryptoCoin] ?? '';
+            const bValue = b[sort.key as keyof CryptoCoin] ?? '';
 
             if (aValue < bValue) return sort.order === 'asc' ? -1 : 1;
             if (aValue > bValue) return sort.order === 'asc' ? 1 : -1;
@@ -530,11 +545,11 @@ export default function App() {
                         <p className="mt-2 text-gray-500 text-md dark:text-gray-400">Global activity metric</p>
                     </Card>
                     <Card icon={DollarSign}>
-                        <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Available Fiat Balance</p>
+                        <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Available Balance</p>
                         <h1 className="mt-1 text-4xl font-extrabold text-gray-900 dark:text-white">
-                            ${portfolio?.balance?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                            ${overviewData.portfolio}
                         </h1>
-                        <button 
+                        <button
                             onClick={handleDepositWithdraw}
                             className="flex items-center mt-2 font-medium text-indigo-500 transition duration-150 text-md hover:text-indigo-600">
                             <DollarSign className="w-4 h-4 mr-1"/> Deposit / Withdraw
@@ -595,6 +610,7 @@ export default function App() {
                                     key={coin.id} 
                                     coin={coin} 
                                     isUpdating={updatingSymbols.has(coin.symbol)}
+                                    onClick={handleCoinClick}
                                 />
                             ))
                         ) : (

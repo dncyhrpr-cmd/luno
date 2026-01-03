@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
-import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-import { logUserActivity } from '@/lib/db';
+import { extractTokenFromRequest, verifyAccessToken, validatePassword } from '@/lib/auth-utils';
+import { PrismaClient } from '@prisma/client';
+import bcryptjs from 'bcryptjs';
+
+const prisma = new PrismaClient();
 
 export async function POST(request: Request) {
   const token = extractTokenFromRequest(request as any);
@@ -12,28 +15,47 @@ export async function POST(request: Request) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    const data = await request.json();
+    const { currentPassword, newPassword } = await request.json();
 
-    // In a real application, you would:
-    // 1. Verify the user's current password.
-    // 2. Hash the new password.
-    // 3. Update the user's password in the database.
-
-    if (data.currentPassword === 'wrong-password') {
-        return NextResponse.json({ message: 'Incorrect current password' }, { status: 400 });
+    if (!currentPassword || !newPassword) {
+      return NextResponse.json({ error: 'Current password and new password are required' }, { status: 400 });
     }
 
-    // Log the password change activity
-    try {
-      await logUserActivity(userId, 'Password Change', 'Password was successfully updated');
-    } catch (error) {
-      console.error('Failed to log password change activity:', error);
+    // Find the user
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    console.log('Received password change request:', data);
+    // Verify current password
+    const passwordHash = user.password;
+    if (!passwordHash) {
+      return NextResponse.json({ error: 'Password not set for this account' }, { status: 400 });
+    }
+
+    const isCurrentPasswordValid = await bcryptjs.compare(currentPassword, passwordHash);
+    if (!isCurrentPasswordValid) {
+      return NextResponse.json({ error: 'Incorrect current password' }, { status: 400 });
+    }
+
+    // Validate new password
+    const validationResult = validatePassword(newPassword);
+    if (validationResult !== true) {
+      return NextResponse.json({ error: validationResult }, { status: 400 });
+    }
+
+    // Hash the new password
+    const newPasswordHash = await bcryptjs.hash(newPassword, 10);
+
+    // Update user with new password hash
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: newPasswordHash }
+    });
 
     return NextResponse.json({ message: 'Password changed successfully' });
   } catch (error: any) {
-    return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
+    console.error('Password change error:', error);
+    return NextResponse.json({ error: 'Password change failed' }, { status: 500 });
   }
 }

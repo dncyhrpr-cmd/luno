@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FirestoreDatabase, TransactionRequest } from '../../../../lib/firestore-db';
+import { PrismaClient, TransactionRequest } from '@prisma/client';
 import { getRequestId, handleApiError, structuredLog } from '../../../../lib/correlation';
 import { extractTokenFromRequest, verifyAccessToken, AuthTokenPayload } from '../../../../lib/auth-utils';
 
-const firestoreDB = new FirestoreDatabase();
+const prisma = new PrismaClient();
 
 // Middleware to verify admin privileges
 async function verifyAdmin(request: NextRequest, reqId: string): Promise<AuthTokenPayload | null> {
@@ -39,19 +39,16 @@ export async function GET(request: NextRequest) {
     try {
         structuredLog('INFO', reqId, 'Fetching transaction requests', { adminId: adminPayload.userId });
 
-        const allRequests = await firestoreDB.getRequests();
-        const pendingRequests = allRequests.filter((r: TransactionRequest) => r.status === 'pending');
+        const pendingRequests = await prisma.transactionRequest.findMany({
+            where: { status: 'pending' },
+            include: { user: true }
+        });
 
-        const requestsWithUserDetails = await Promise.all(
-            pendingRequests.map(async (req: TransactionRequest) => {
-                const userData = await firestoreDB.findUserById(req.userId);
-                return {
-                    ...req,
-                    username: userData?.username,
-                    email: userData?.email
-                };
-            })
-        );
+        const requestsWithUserDetails = pendingRequests.map((req: TransactionRequest & { user: { username: string | null; email: string | null } | null }) => ({
+            ...req,
+            username: req.user?.username,
+            email: req.user?.email
+        }));
 
         structuredLog('INFO', reqId, 'Successfully fetched transaction requests', { count: requestsWithUserDetails.length });
         return NextResponse.json({
@@ -88,8 +85,7 @@ export async function PUT(request: NextRequest) {
 
         structuredLog('INFO', reqId, 'Processing transaction request', { adminId: adminPayload.userId, requestId, action });
 
-        const allRequests = await firestoreDB.getRequests();
-        const transactionRequest = allRequests.find((r: TransactionRequest) => r.id === requestId);
+        const transactionRequest = await prisma.transactionRequest.findUnique({ where: { id: requestId } });
 
         if (!transactionRequest) {
             structuredLog('WARN', reqId, 'Request not found or already processed', { requestId, status: 404 });
@@ -140,50 +136,108 @@ export async function PUT(request: NextRequest) {
     }
 }
 
-async function handleApprove(request: TransactionRequest, adminId: string, reqId: string) {
-    // 1. Process the transaction atomically (updates balance, creates history, sets request status to 'executed')
-    await firestoreDB.processTransactionRequest(request, adminId);
+async function handleApprove(request: any, adminId: string, reqId: string) {
+    // Get current user balance
+    const user = await prisma.user.findUnique({ where: { id: request.userId } });
+    if (!user) {
+        throw new Error('User not found');
+    }
 
-    // 2. Create Audit Log (using 'executed' status implied by processTransactionRequest completion)
-    await firestoreDB.createAuditLog({
-        adminId: adminId,
-        action: `${request.type}_executed`,
-        resourceType: 'transaction_request',
-        resourceId: request.id,
-        changes: { status: 'executed', amount: request.amount },
-        status: 'success'
+    const balanceChange = request.type === 'deposit' ? request.amount : -request.amount;
+
+    // Check sufficient balance for withdrawal
+    if (request.type === 'withdraw' && user.balance < request.amount) {
+        throw new Error('Insufficient balance');
+    }
+
+    const newBalance = user.balance + balanceChange;
+
+    // Atomic transaction to update balance and request status
+    await prisma.$transaction(async (tx) => {
+        // Update user balance
+        await tx.user.update({
+            where: { id: request.userId },
+            data: { balance: newBalance }
+        });
+
+        // Update request status
+        await tx.transactionRequest.update({
+            where: { id: request.id },
+            data: { status: 'executed', processedBy: adminId, executedAt: new Date() }
+        });
+
+        // Create transaction history
+        await tx.transactionHistory.create({
+            data: {
+                userId: request.userId,
+                type: request.type,
+                amount: request.amount,
+                description: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} processed by admin`,
+                status: 'completed',
+                balanceBefore: user.balance,
+                balanceAfter: newBalance
+            }
+        });
+
+        // Create audit log
+        await tx.auditLog.create({
+            data: {
+                userId: request.userId,
+                adminId,
+                action: `${request.type}_executed`,
+                resourceType: 'transaction_request',
+                resourceId: request.id,
+                changes: JSON.stringify({
+                    status: 'executed',
+                    amount: request.amount,
+                    balanceBefore: user.balance,
+                    balanceAfter: newBalance
+                }),
+                status: 'success'
+            }
+        });
     });
 
-    // 3. Create Alert for user
-    await firestoreDB.createAlert({
-        userId: request.userId,
-        type: 'transaction',
-        title: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} Approved and Executed`,
-        message: `Your ${request.type} of $${request.amount.toFixed(2)} has been successfully processed.`,
-        read: false
+    // Create alert (outside transaction as it's not critical)
+    await prisma.alert.create({
+        data: {
+            userId: request.userId,
+            type: 'transaction',
+            title: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} Approved and Executed`,
+            message: `Your ${request.type} of ${request.amount.toFixed(2)} has been successfully processed.`,
+            read: false
+        }
     });
 
-    structuredLog('INFO', reqId, 'Transaction request approved and executed', { requestId: request.id, adminId, amount: request.amount });
+    structuredLog('INFO', reqId, 'Transaction request approved and executed', { requestId: request.id, adminId, amount: request.amount, newBalance });
 }
 
-async function handleReject(request: TransactionRequest, reason: string, adminId: string, reqId: string) {
-    await firestoreDB.updateRequest(request.id, { status: 'rejected', reason, processedBy: adminId });
-
-    await firestoreDB.createAuditLog({
-        adminId: adminId,
-        action: `${request.type}_rejected`,
-        resourceType: 'transaction_request',
-        resourceId: request.id,
-        changes: { status: 'rejected', reason },
-        status: 'success'
+async function handleReject(request: any, reason: string, adminId: string, reqId: string) {
+    await prisma.transactionRequest.update({
+        where: { id: request.id },
+        data: { status: 'rejected', reason, processedBy: adminId }
     });
 
-    await firestoreDB.createAlert({
-        userId: request.userId,
-        type: 'transaction',
-        title: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} Rejected`,
-        message: `Your ${request.type} request for $${request.amount.toFixed(2)} has been rejected. Reason: ${reason}`,
-        read: false
+    await prisma.auditLog.create({
+        data: {
+            userId: request.userId,
+            adminId,
+            action: `${request.type}_rejected`,
+            resourceType: 'transaction_request',
+            resourceId: request.id,
+            changes: JSON.stringify({ status: 'rejected', reason }),
+            status: 'success'
+        }
+    });
+
+    await prisma.alert.create({
+        data: {
+            userId: request.userId,
+            type: 'transaction',
+            title: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} Rejected`,
+            message: `Your ${request.type} request for ${request.amount.toFixed(2)} has been rejected. Reason: ${reason}`,
+            read: false
+        }
     });
 
     structuredLog('INFO', reqId, 'Transaction request rejected', { requestId: request.id, adminId, reason });

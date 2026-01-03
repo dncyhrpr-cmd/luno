@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Wallet, Plus, ArrowDown, X, TrendingUp, TrendingDown, Info, AlertCircle } from 'lucide-react';
-import { safeFetch } from '../../lib/safeFetch';
+import { Wallet, Plus, ArrowDown, X, TrendingUp, TrendingDown, Info, AlertCircle, Lock } from 'lucide-react';
+import { useAuthFetch } from '../../lib/authFetch';
 import { useBinanceWebSocket } from '../../hooks/useBinanceWebSocket';
 import { User } from '../../types/index';
 
@@ -12,6 +12,7 @@ interface Asset {
   symbol: string;
   quantity: number;
   averagePrice: number;
+  locked?: boolean;
 }
 
 interface PortfolioData {
@@ -38,6 +39,7 @@ const Notification: React.FC<{ message: string; type: 'success' | 'error'; onClo
 // --- Sub-components ---
 
 const AssetRow: React.FC<{ asset: Asset; currentPrice: number; onSell: (asset: Asset) => void }> = React.memo(({ asset, currentPrice, onSell }) => {
+  const isLocked = asset.locked;
   const currentValue = asset.quantity * currentPrice;
   const costBasis = asset.quantity * asset.averagePrice;
   const pnl = currentValue - costBasis;
@@ -45,14 +47,25 @@ const AssetRow: React.FC<{ asset: Asset; currentPrice: number; onSell: (asset: A
   const isPositive = pnl >= 0;
 
   return (
-    <div className="grid items-center grid-cols-2 gap-4 py-4 transition-colors border-b border-gray-50 md:grid-cols-4 dark:border-gray-700/50 hover:bg-gray-50/50 dark:hover:bg-gray-700/30">
-      <div>
-        <div className="font-bold text-gray-900 dark:text-white">{asset.symbol.replace('USDT', '')}</div>
+    <div className={`grid items-center grid-cols-2 gap-4 py-4 transition-colors border-b border-gray-50 md:grid-cols-4 dark:border-gray-700/50 hover:bg-gray-50/50 dark:hover:bg-gray-700/30 ${isLocked ? 'opacity-50' : ''}`}>
+      <div className="flex items-center gap-2">
+        <div className="font-bold text-gray-900 dark:text-white">{asset.symbol.replace('USDT', '').replace('BINARY-', 'Binary ')}</div>
+        {isLocked && <Lock size={14} className="text-orange-500" />}
         <div className="text-xs text-gray-500">Avg: ${asset.averagePrice.toLocaleString()}</div>
       </div>
+      {isLocked && <div className="flex items-center col-span-2 gap-1 mt-1 text-xs text-orange-500 md:col-span-4">
+        <AlertCircle size={12} />
+        This asset is locked by the administrator and cannot be traded.
+      </div>}
       <div className="text-right md:text-left">
         <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{asset.quantity.toLocaleString(undefined, { maximumFractionDigits: 8 })}</div>
-        <button onClick={() => onSell(asset)} className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider hover:underline">Liquidate</button>
+        <button
+          onClick={() => onSell(asset)}
+          disabled={isLocked}
+          className={`text-[10px] font-bold uppercase tracking-wider hover:underline ${isLocked ? 'text-gray-400 cursor-not-allowed' : 'text-indigo-500'}`}
+        >
+          Liquidate
+        </button>
       </div>
       <div className="hidden text-right md:block">
         <div className="text-sm font-semibold dark:text-white">${currentValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
@@ -74,8 +87,10 @@ const AssetRow: React.FC<{ asset: Asset; currentPrice: number; onSell: (asset: A
 // --- Main Page Component ---
 
 const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
+  const authFetch = useAuthFetch();
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<'deposit' | 'withdraw' | 'sell' | null>(null);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
@@ -87,27 +102,45 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
   const { prices: wsPrices } = useBinanceWebSocket(assetSymbols);
 
   const fetchData = useCallback(async () => {
-    const token = user?.accessToken || (typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null);
-    if (!token) {
-      setError('Session expired. Please log in.');
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      const res = await safeFetch('/api/portfolio', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) setPortfolio(res.data);
-      else setError(res.error || 'Failed to load assets');
+      const res = await authFetch('/api/portfolio');
+      if (res.ok) {
+        setPortfolio(res.data);
+        setIsAuthenticated(true);
+      } else if (res.status === 401) {
+        setIsAuthenticated(false);
+      } else {
+        setError(res.error || 'Failed to load assets');
+      }
     } catch (err) {
       setError('Connection error');
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [authFetch]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Check for Stripe success
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('success') === 'true') {
+      setNotify({ m: 'Deposit successful! Your balance has been updated.', t: 'success' });
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (urlParams.get('canceled') === 'true') {
+      setNotify({ m: 'Deposit canceled.', t: 'error' });
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
+  // Poll for real-time updates on asset lock status
+  useEffect(() => {
+    if (isAuthenticated && portfolio?.assets.length) {
+      const interval = setInterval(fetchData, 10000); // Poll every 10 seconds
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated, portfolio?.assets.length, fetchData]);
 
   // Listen for portfolio updates from other pages (e.g., after buying assets)
   useEffect(() => {
@@ -121,16 +154,17 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
   // Derived Calculations
   const stats = useMemo(() => {
     if (!portfolio) return { total: 0, pnl: 0, pnlPct: 0 };
+    const balance = portfolio.balance || 0;
     const totalAssets = portfolio.assets.reduce((sum, a) => {
       const price = wsPrices.get(a.symbol)?.price || a.averagePrice;
       return sum + (a.quantity * price);
     }, 0);
     const totalCost = portfolio.assets.reduce((sum, a) => sum + (a.quantity * a.averagePrice), 0);
-    const totalValue = totalAssets + portfolio.balance;
+    const totalValue = totalAssets + balance;
     const pnl = totalAssets - totalCost;
-    return { 
-        total: totalValue, 
-        pnl, 
+    return {
+        total: totalValue,
+        pnl,
         pnlPct: totalCost > 0 ? (pnl / totalCost) * 100 : 0,
         assetRatio: totalValue > 0 ? (totalAssets / totalValue) * 100 : 0
     };
@@ -138,38 +172,51 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
 
   const handleAction = async (type: string, payload: any) => {
     setFormLoading(true);
-    const token = user?.accessToken || localStorage.getItem('accessToken');
 
     try {
-      const endpoint = type === 'sell' ? '/api/orders' : '/api/portfolio';
-      const body = type === 'sell'
-        ? {
-            ...payload,
-            type: 'SELL',
-            orderType: 'MARKET',
-            price: wsPrices.get(payload.symbol)?.price || 0,
-            leverage: 1
-          }
-        : { ...payload, type };
+      if (type === 'deposit') {
+        // Use Stripe for deposits
+        const res = await authFetch('/api/stripe/create-checkout-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount: payload.amount, userId: user?.id })
+        });
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(body)
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setNotify({ m: data.message || 'Request processed successfully', t: 'success' });
-        fetchData();
-        setActiveModal(null);
+        if (res.ok && res.data?.url) {
+          window.location.href = res.data.url;
+        } else {
+          setNotify({ m: res.error || 'Failed to initiate deposit', t: 'error' });
+          setFormLoading(false);
+        }
       } else {
-        const errData = await res.json();
-        setNotify({ m: errData.error || 'Transaction failed', t: 'error' });
+        const endpoint = type === 'sell' ? '/api/orders' : '/api/portfolio';
+        const body = type === 'sell'
+          ? {
+              ...payload,
+              type: 'SELL',
+              orderType: 'MARKET',
+              price: wsPrices.get(payload.symbol)?.price || 0,
+              leverage: 1
+            }
+          : { ...payload, type };
+
+        const res = await authFetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        if (res.ok) {
+          setNotify({ m: res.data?.message || 'Request processed successfully', t: 'success' });
+          fetchData();
+          setActiveModal(null);
+        } else {
+          setNotify({ m: res.error || 'Transaction failed', t: 'error' });
+        }
+        setFormLoading(false);
       }
     } catch {
       setNotify({ m: 'System error. Try again later.', t: 'error' });
-    } finally {
       setFormLoading(false);
     }
   };
@@ -200,9 +247,28 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-        {/* Left Column: Stats */}
-        <div className="space-y-6 lg:col-span-4">
+      {!isAuthenticated && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-1">
+          <Card>
+            <div className="py-8 text-center">
+              <AlertCircle className="w-12 h-12 mx-auto mb-4 text-yellow-500" />
+              <h3 className="mb-2 text-lg font-bold text-gray-900 dark:text-white">Authentication Required</h3>
+              <p className="mb-4 text-gray-600 dark:text-gray-400">Please log in to view your portfolio and trading data.</p>
+              <button
+                onClick={() => window.location.href = '/login'}
+                className="px-6 py-2 text-white transition-colors bg-indigo-600 rounded-lg hover:bg-indigo-700"
+              >
+                Sign In
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {isAuthenticated && (
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+          {/* Left Column: Stats */}
+          <div className="space-y-6 lg:col-span-4">
           <Card>
             <div className="space-y-6">
               <div>
@@ -213,7 +279,7 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
               <div className="grid grid-cols-2 gap-4 py-4 border-gray-100 border-y dark:border-gray-700">
                 <div>
                   <div className="text-xs text-gray-500">Available USD</div>
-                  <div className="text-lg font-bold dark:text-white">${portfolio?.balance.toLocaleString()}</div>
+                  <div className="text-lg font-bold dark:text-white">${(portfolio?.balance || 0).toLocaleString()}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-gray-500">Total P&L</div>
@@ -279,6 +345,7 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
           </Card>
         </div>
       </div>
+      )}
 
       {/* Unified Action Modal */}
       {activeModal && (

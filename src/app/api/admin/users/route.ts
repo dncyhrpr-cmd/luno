@@ -1,31 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { FirestoreDatabase } from '../../../../lib/firestore-db';
-import { getAuth } from '../../../../lib/firestore-admin';
-import { getRequestId, handleApiError, structuredLog } from '../../../../lib/correlation';
-import { extractTokenFromRequest, verifyAccessToken, AuthTokenPayload } from '../../../../lib/auth-utils';
+import { prisma } from '@/lib/db';
+import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
+import { verifyAdmin } from '@/lib/auth-utils';
+import NodeCache from 'node-cache';
 
-const firestoreDB = new FirestoreDatabase();
-
-// Middleware to verify admin privileges
-async function verifyAdmin(request: NextRequest, reqId: string): Promise<AuthTokenPayload | null> {
-    const token = extractTokenFromRequest(request);
-    if (!token) {
-        structuredLog('WARN', reqId, 'Unauthorized: Missing token for admin user action', { status: 401 });
-        return null;
-    }
-
-    try {
-        const payload = await verifyAccessToken(token);
-        if (!payload.roles?.includes('admin')) {
-            structuredLog('WARN', reqId, 'Forbidden: User is not an admin', { userId: payload.userId, status: 403 });
-            return null;
-        }
-        return payload;
-    } catch (error: any) {
-        structuredLog('WARN', reqId, 'Auth token error on admin user action', { error: error.message, status: 401 });
-        return null;
-    }
-}
+const adminUsersCache = new NodeCache({ stdTTL: 300 }); // 5 minutes
 
 // GET - Fetch all users with pagination
 export async function GET(request: NextRequest) {
@@ -39,147 +18,83 @@ export async function GET(request: NextRequest) {
 
     try {
         const { searchParams } = new URL(request.url);
+        const includeDetails = searchParams.get('includeDetails') === 'true';
+        const page = parseInt(searchParams.get('page') || '1');
+        const limit = parseInt(searchParams.get('limit') || '50');
 
-        structuredLog('INFO', reqId, 'Fetching users', { adminId: adminPayload.userId });
-        const isAvailable = firestoreDB.isFirebaseAvailable();
-        structuredLog('INFO', reqId, 'Firebase available', { isAvailable });
-        const { users, total } = await firestoreDB.getUsers();
+        const cacheKey = `admin_users_${includeDetails}_${page}_${limit}`;
+        
+        // Skip cache if requested
+        const noCache = searchParams.get('noCache') === 'true';
+        if (!noCache) {
+            const cachedData = adminUsersCache.get(cacheKey);
+            if (cachedData) {
+                return NextResponse.json({ ...cachedData, correlationId: reqId });
+            }
+        }
 
-        // Log all users for debugging
-        users.forEach(user => {
-          structuredLog('INFO', reqId, 'Fetched user', { id: user.id, email: user.email, role: user.role, status: user.status, balance: user.balance });
-        });
-
-        // Log balances for debugging
-        users.forEach(user => {
-          if (user.email === 'p2p@gmail.com') {
-            structuredLog('INFO', reqId, 'User p2p@gmail.com balance', { balance: user.balance, type: typeof user.balance });
+        structuredLog('INFO', reqId, 'Fetching users', { adminId: adminPayload.userId, includeDetails, page, limit });
+        
+        // Fetch users with assets, orders, and transaction history
+        const usersWithDetails = await prisma.user.findMany({
+          include: {
+            assets: true,
+            orders: {
+              where: {
+                status: {
+                  in: ['pending', 'executed']
+                }
+              }
+            },
+            transactionHistory: {
+              where: {
+                type: {
+                  in: ['deposit', 'withdraw']
+                }
+              },
+              select: {
+                type: true,
+                amount: true
+              }
+            }
+          },
+          orderBy: {
+            createdAt: 'desc'
           }
         });
+        
+        const total = usersWithDetails.length;
 
-        structuredLog('INFO', reqId, 'Successfully fetched users', { count: users.length, total });
-        return NextResponse.json({ users, total, correlationId: reqId });
+        // Implement pagination
+        const startIndex = (page - 1) * limit;
+        const endIndex = startIndex + limit;
+        const users = usersWithDetails.slice(startIndex, endIndex);
+
+        const responseData = {
+          users,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        };
+
+        // Cache the response
+        adminUsersCache.set(cacheKey, responseData);
+
+        structuredLog('INFO', reqId, 'Successfully fetched users', { count: users.length, total, page, limit });
+        return NextResponse.json({ ...responseData, correlationId: reqId });
 
     } catch (error: any) {
-        if (error.message?.includes('Firebase Firestore not initialized')) {
-          return NextResponse.json({ users: [], total: 0, correlationId: reqId });
-        }
         return handleApiError(reqId, error, route, 'Failed to fetch users');
     }
 }
 
-// POST - Create a new user (admin only)
+// POST - Create a new user (admin only) - DISABLED
 export async function POST(request: NextRequest) {
-    const reqId = getRequestId(request);
-    const route = request.url;
-
-    const adminPayload = await verifyAdmin(request, reqId);
-    if (!adminPayload) {
-        return NextResponse.json({ error: 'Unauthorized or Forbidden', correlationId: reqId }, { status: 403 });
-    }
-
-    try {
-        const { username, email, password, role = 'user' } = await request.json();
-
-        if (!username || !email || !password) {
-            structuredLog('WARN', reqId, 'Missing required fields for user creation', { status: 400 });
-            return NextResponse.json({ error: 'Username, email, and password are required', correlationId: reqId }, { status: 400 });
-        }
-
-        structuredLog('INFO', reqId, 'Attempting to create new user', { adminId: adminPayload.userId, username, email, role });
-        
-        const userRecord = await getAuth().createUser({
-            email,
-            password,
-            displayName: username,
-        });
-
-        const newUser = await firestoreDB.createUser({
-            username,
-            email,
-            role,
-            roles: [role],
-            balance: 0,
-            twoFactorEnabled: false,
-            migrationStatus: 'migrated'
-        }, userRecord.uid);
-
-        if (!newUser) {
-            return NextResponse.json({ error: 'Failed to create user', correlationId: reqId }, { status: 500 });
-        }
-
-        await firestoreDB.createAuditLog({
-            adminId: adminPayload.userId,
-            action: 'user_created',
-            resourceType: 'user',
-            resourceId: newUser.id,
-            changes: { email, role },
-            status: 'success'
-        });
-
-        structuredLog('INFO', reqId, 'Successfully created new user', { newUserId: newUser.id });
-        return NextResponse.json({ message: 'User created successfully', user: newUser, correlationId: reqId }, { status: 201 });
-
-    } catch (error: any) {
-        if (error.message?.includes('already exists')) {
-            structuredLog('WARN', reqId, 'User creation conflict', { error: error.message, status: 409 });
-            return NextResponse.json({ error: 'User with this email already exists', correlationId: reqId }, { status: 409 });
-        }
-        return handleApiError(reqId, error, route, 'Failed to create user');
-    }
+    return NextResponse.json({ error: 'Not implemented' }, { status: 501 });
 }
 
-// PUT - Update user status or role
+// PUT - Update user status or role - DISABLED
 export async function PUT(request: NextRequest) {
-    const reqId = getRequestId(request);
-    const route = request.url;
-
-    const adminPayload = await verifyAdmin(request, reqId);
-    if (!adminPayload) {
-        return NextResponse.json({ error: 'Unauthorized or Forbidden', correlationId: reqId }, { status: 403 });
-    }
-
-    try {
-        const { userId, status, role } = await request.json();
-
-        if (!userId) {
-            return NextResponse.json({ error: 'User ID is required', correlationId: reqId }, { status: 400 });
-        }
-
-        let changes: any = {};
-        if (status) {
-            if (!['active', 'inactive', 'banned'].includes(status)) {
-                return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
-            }
-            await firestoreDB.updateUser(userId, { status });
-            changes.status = status;
-        }
-
-        if (role) {
-            if (!['user', 'trader', 'admin'].includes(role)) {
-                return NextResponse.json({ error: 'Invalid role' }, { status: 400 });
-            }
-            await firestoreDB.updateUser(userId, { roles: [role] });
-            changes.role = role;
-        }
-
-        if (Object.keys(changes).length === 0) {
-            return NextResponse.json({ error: 'No updateable fields provided' }, { status: 400 });
-        }
-
-        await firestoreDB.createAuditLog({
-            adminId: adminPayload.userId,
-            action: 'user_updated',
-            resourceType: 'user',
-            resourceId: userId,
-            changes,
-            status: 'success'
-        });
-
-        structuredLog('INFO', reqId, 'Successfully updated user', { adminId: adminPayload.userId, targetUserId: userId, changes });
-        return NextResponse.json({ message: 'User updated successfully', correlationId: reqId });
-
-    } catch (error: any) {
-        return handleApiError(reqId, error, route, 'Failed to update user');
-    }
+    return NextResponse.json({ error: 'Not implemented' }, { status: 501 });
 }
