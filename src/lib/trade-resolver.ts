@@ -121,7 +121,7 @@ export async function resolveExpiredBinaryOrders() {
 
           // Update user balance
           batch.update(collections.users.doc(userId), {
-            balance: balanceAfter,
+            balance: admin.firestore.FieldValue.increment(payout),
             updatedAt: admin.firestore.Timestamp.now()
           });
 

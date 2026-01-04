@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { collections } from '@/lib/db';
- import admin from 'firebase-admin';
 import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
 import { verifyAdmin } from '@/lib/auth-utils';
+import NodeCache from 'node-cache';
+import admin from 'firebase-admin';
 
-// POST - Admin direct balance update (credit/debit)
+const adminUsersCache = new NodeCache({ stdTTL: 300 }); // Same as in users API
+
+// POST - Adjust user balance (admin only)
 export async function POST(request: NextRequest) {
     const reqId = getRequestId(request);
     const route = request.url;
@@ -18,38 +21,47 @@ export async function POST(request: NextRequest) {
         const { userId, amount, reason } = await request.json();
 
         if (!userId || typeof amount !== 'number' || amount === 0) {
-            structuredLog('WARN', reqId, 'Invalid parameters for balance update', { status: 400 });
-            return NextResponse.json({ error: 'User ID and non-zero amount are required', correlationId: reqId }, { status: 400 });
+            structuredLog('WARN', reqId, 'Invalid parameters for balance adjustment', { userId, amount });
+            return NextResponse.json({ error: 'userId and non-zero amount are required', correlationId: reqId }, { status: 400 });
         }
 
-        structuredLog('INFO', reqId, 'Admin balance update requested', { adminId: adminPayload.userId, targetUserId: userId, amount, reason });
+        if (!reason || reason.trim() === '') {
+            structuredLog('WARN', reqId, 'Reason required for balance adjustment');
+            return NextResponse.json({ error: 'Reason is required', correlationId: reqId }, { status: 400 });
+        }
+
+        structuredLog('INFO', reqId, 'Adjusting user balance', { adminId: adminPayload.userId, userId, amount, reason });
 
         // Get current user balance
         const userDoc = await collections.users.doc(userId).get();
         if (!userDoc.exists) {
             return NextResponse.json({ error: 'User not found', correlationId: reqId }, { status: 404 });
         }
-        const user = { id: userDoc.id, ...userDoc.data() } as any;
 
-        const newBalance = user.balance + amount;
-        if (newBalance < 0) {
-            return NextResponse.json({ error: 'Insufficient balance for debit', correlationId: reqId }, { status: 400 });
-        }
+        const user = userDoc.data()!;
+        const balanceBefore = user.balance || 0;
+        const balanceAfter = balanceBefore + amount;
 
-        // Update balance
-        await collections.users.doc(userId).update({ balance: newBalance });
+        // Update balance atomically
+        await collections.users.doc(userId).update({
+            balance: admin.firestore.FieldValue.increment(amount),
+            updatedAt: admin.firestore.Timestamp.now()
+        });
+
+        // Clear cache to ensure updated data is fetched
+        adminUsersCache.flushAll();
 
         // Create transaction history
         const txId = collections.transactionHistory.doc().id;
         await collections.transactionHistory.doc(txId).set({
             id: txId,
             userId,
-            type: amount > 0 ? 'deposit' : 'withdrawal',
+            type: amount > 0 ? 'credit' : 'debit',
             amount: Math.abs(amount),
-            description: `Admin ${amount > 0 ? 'credit' : 'debit'}: ${reason || 'Manual adjustment'}`,
+            description: reason,
             status: 'completed',
-            balanceBefore: user.balance,
-            balanceAfter: newBalance,
+            balanceBefore,
+            balanceAfter,
             createdAt: admin.firestore.Timestamp.now()
         });
 
@@ -59,27 +71,22 @@ export async function POST(request: NextRequest) {
             id: auditId,
             userId,
             adminId: adminPayload.userId,
-            action: 'balance_update',
-            resourceType: 'user_balance',
+            action: 'balance_adjustment',
+            resourceType: 'user',
             resourceId: userId,
-            changes: JSON.stringify({
-                amount,
-                reason: reason || 'Manual adjustment',
-                balanceBefore: user.balance,
-                balanceAfter: newBalance
-            }),
+            changes: JSON.stringify({ amount, reason, balanceBefore, balanceAfter }),
             status: 'success',
             createdAt: admin.firestore.Timestamp.now()
         });
 
-        structuredLog('INFO', reqId, 'Admin balance update completed', { adminId: adminPayload.userId, targetUserId: userId, amount, newBalance });
+        structuredLog('INFO', reqId, 'Balance adjusted successfully', { userId, amount, balanceAfter, adminId: adminPayload.userId });
         return NextResponse.json({
             message: `Balance ${amount > 0 ? 'credited' : 'debited'} successfully`,
-            newBalance,
+            newBalance: balanceAfter,
             correlationId: reqId
-        }, { status: 200 });
+        });
 
     } catch (error: any) {
-        return handleApiError(reqId, error, route, 'Failed to update balance');
+        return handleApiError(reqId, error, route, 'Failed to adjust balance');
     }
 }

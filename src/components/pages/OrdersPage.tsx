@@ -13,16 +13,24 @@ type Portfolio = {
 type Order = {
    id: string;
    userId: string;
-   type: 'BUY' | 'SELL';
+   type?: 'BUY' | 'SELL';
    symbol: string;
-   quantity: number;
-   price: number;
-   status: 'PENDING' | 'FILLED' | 'CANCELLED';
-   executedQuantity: number;
+   quantity?: number;
+   price?: number;
+   status: 'PENDING' | 'FILLED' | 'CANCELLED' | 'resolved' | 'active';
+   executedQuantity?: number;
    createdAt: any;
-   orderType?: 'MARKET' | 'LIMIT';
+   orderType?: 'MARKET' | 'LIMIT' | 'binary';
    leverage?: number;
    pnl?: number;
+   // Binary specific fields
+   direction?: 'UP' | 'DOWN';
+   amount?: number;
+   entryPrice?: number;
+   result?: 'win' | 'loss';
+   expiryTime?: any;
+   resolvedAt?: any;
+   profitPercent?: number;
 };
 
 type TransactionRequest = {
@@ -123,7 +131,11 @@ const TransactionDetailModal: React.FC<{ transaction: TransactionHistory | null;
           } />
           <DetailItem label="Balance Before" value={`$${transaction.balanceBefore.toLocaleString('en-US', { minimumFractionDigits: 2 })}`} />
           <DetailItem label="Balance After" value={`$${transaction.balanceAfter.toLocaleString('en-US', { minimumFractionDigits: 2 })}`} />
-          <DetailItem label="Date" value={new Date(transaction.createdAt?.seconds * 1000).toLocaleString()} />
+          <DetailItem label="Date" value={
+             transaction.createdAt?.toDate ? transaction.createdAt.toDate().toLocaleString() :
+             transaction.createdAt?.seconds ? new Date(transaction.createdAt.seconds * 1000).toLocaleString() :
+             'Invalid Date'
+           } />
           {transaction.reason && <DetailItem label="Reason" value={transaction.reason} />}
         </ul>
         <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">{transaction.description}</p>
@@ -270,11 +282,18 @@ const OrdersPage: React.FC = () => {
 
       if (res.ok) {
         const data = res.data;
+        console.log('OrdersPage: Fetched data successfully:', {
+          portfolio: data.portfolio ? 'present' : 'null',
+          orders: data.orders?.length || 0,
+          requests: data.requests?.length || 0,
+          history: data.transactionHistory?.length || 0
+        });
         setPortfolio(data.portfolio);
         setOrders(data.orders || []);
         setRequests(data.requests || []);
         setTransactionHistory(data.transactionHistory || []);
       } else {
+        console.error('OrdersPage: Failed to fetch data, status:', res.status, 'error:', res.error);
         // Set empty data on error
         setPortfolio(null);
         setOrders([]);
@@ -282,7 +301,7 @@ const OrdersPage: React.FC = () => {
         setTransactionHistory([]);
       }
     } catch (error) {
-      console.error('Failed to fetch data:', error);
+      console.error('OrdersPage: Failed to fetch data (catch):', error);
       // Set empty data on error
       setPortfolio(null);
       setOrders([]);
@@ -312,6 +331,15 @@ const OrdersPage: React.FC = () => {
       fetchData();
     }
   }, [activeSection, fetchData]);
+
+  // Listen for portfolio updates from other pages
+  useEffect(() => {
+    const handlePortfolioUpdate = () => {
+      fetchData();
+    };
+    window.addEventListener('portfolio:updated', handlePortfolioUpdate);
+    return () => window.removeEventListener('portfolio:updated', handlePortfolioUpdate);
+  }, [fetchData]);
 
   // Get unique transaction types for filter
   const uniqueTypes = useMemo(() => {
@@ -584,30 +612,66 @@ const OrdersPage: React.FC = () => {
           </div>
           <div className="space-y-4">
             {orders.length > 0 ? (
-              orders.map(order => (
-                <div key={order.id} className="p-4 border border-gray-200 rounded-lg dark:border-gray-700">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className={`font-bold ${order.type === 'BUY' ? 'text-green-500' : 'text-red-500'}`}>
-                        {order.type} {order.orderType}
-                      </span>
-                      <span className="ml-2 text-gray-600 dark:text-gray-300">
-                        {order.quantity} {order.symbol} @ ${order.price.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
+              orders.map(order => {
+                const isBinary = order.orderType === 'binary';
+                const displayDate = order.resolvedAt || order.expiryTime || order.createdAt;
+                const dateValue = displayDate?.toDate ? displayDate.toDate() : new Date(displayDate?.seconds ? displayDate.seconds * 1000 : displayDate);
+
+                return (
+                  <div key={order.id} className="p-4 border border-gray-200 rounded-lg dark:border-gray-700">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        {isBinary ? (
+                          <span className="font-bold text-blue-600 dark:text-blue-400">
+                            Binary {order.direction}
+                          </span>
+                        ) : (
+                          <span className={`font-bold ${order.type === 'BUY' ? 'text-green-500' : 'text-red-500'}`}>
+                            {order.type} {order.orderType}
+                          </span>
+                        )}
+                        <span className="ml-2 text-gray-600 dark:text-gray-300">
+                          {isBinary ? (
+                            `${order.symbol} - ${(order.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} @ ${(order.entryPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                          ) : (
+                            `${(order.quantity || 0).toFixed(8)} ${order.symbol} @ ${(order.price || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                          )}
+                        </span>
+                      </div>
+                      <div className={`px-3 py-1 rounded-full text-sm font-medium ${
+                        order.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-400' :
+                        order.status === 'FILLED' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-400' :
+                        order.status === 'resolved' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-400' :
+                        order.status === 'active' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-400' :
+                        'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-400'
+                      }`}>
+                        {order.status}
+                        {isBinary && order.result && (
+                          <span className={`ml-1 ${order.result === 'win' ? 'text-green-600' : 'text-red-600'}`}>
+                            ({order.result})
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-                      order.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-400' :
-                      order.status === 'FILLED' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-400' :
-                      'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-400'
-                    }`}>
-                      {order.status}
-                    </div>
+                    {isBinary && order.pnl !== undefined && (
+                      <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                        PnL: <span className={order.pnl >= 0 ? 'text-green-600' : 'text-red-600'}>
+                          ${order.pnl.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                      </p>
+                    )}
+                    <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                      {isBinary ? (
+                        order.resolvedAt ? `Resolved: ${dateValue.toLocaleString()}` :
+                        order.expiryTime ? `Expires: ${dateValue.toLocaleString()}` :
+                        `Created: ${dateValue.toLocaleString()}`
+                      ) : (
+                        `Created: ${dateValue.toLocaleString()}`
+                      )}
+                    </p>
                   </div>
-                  <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                    {new Date(order.createdAt?.seconds * 1000).toLocaleString()}
-                  </p>
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="p-8 text-center text-gray-500 dark:text-gray-400">
                 No orders found.

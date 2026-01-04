@@ -1,7 +1,7 @@
-import 'server-only';
-
 import admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
+import fs from 'fs';
+import path from 'path';
 
 // Connect to production Firestore
 
@@ -11,22 +11,29 @@ export const getDb = () => {
   if (!dbInstance) {
     try {
       if (!admin.apps.length) {
-        const projectId = process.env.FIREBASE_PROJECT_ID;
-        const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-        const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-
-        if (!projectId || !privateKey || !clientEmail) {
-          throw new Error(`Missing Firebase credentials: projectId=${!!projectId}, privateKey=${!!privateKey}, clientEmail=${!!clientEmail}`);
+        let credential;
+        if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+          // Use environment variables for production
+          credential = admin.credential.cert({
+            projectId: process.env.FIREBASE_PROJECT_ID,
+            privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+            clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          });
+          console.log('Firebase Admin initialized successfully from environment variables');
+        } else {
+          // Fallback to serviceAccountKey.json for development
+          const keyPath = path.resolve(process.cwd(), 'serviceAccountKey.json');
+          if (!fs.existsSync(keyPath)) {
+            throw new Error(`serviceAccountKey.json not found at: ${keyPath}, and no Firebase environment variables set`);
+          }
+          const serviceAccount = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+          credential = admin.credential.cert(serviceAccount);
+          console.log('Firebase Admin initialized successfully from serviceAccountKey.json');
         }
 
         admin.initializeApp({
-          credential: admin.credential.cert({
-            projectId,
-            privateKey,
-            clientEmail,
-          }),
+          credential,
         });
-        console.log('Firebase Admin initialized successfully');
       }
       dbInstance = getFirestore();
       console.log('Firestore instance created successfully');
@@ -37,8 +44,6 @@ export const getDb = () => {
   }
   return dbInstance;
 };
-
-export const db = getDb();
 
 // Helper functions for common operations
 export const collections = {

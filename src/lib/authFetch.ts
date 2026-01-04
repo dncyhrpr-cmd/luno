@@ -14,7 +14,7 @@ export function useAuthFetch() {
     // Ensure API calls use the correct base URL
     let apiUrl = input as string;
     if (typeof input === 'string' && input.startsWith('/api/')) {
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
       apiUrl = `${baseUrl}${input}`;
     }
 

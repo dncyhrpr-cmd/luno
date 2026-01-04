@@ -14,6 +14,7 @@ export const useBinanceWebSocket = (symbols: string[]) => {
     const [connectionAttempts, setConnectionAttempts] = useState(0);
     const wsRef = useRef<WebSocket | null>(null);
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const lastSymbolsKeyRef = useRef<string>('');
     const isConnectingRef = useRef(false);
 
@@ -66,6 +67,16 @@ export const useBinanceWebSocket = (symbols: string[]) => {
             setIsConnected(true);
             setConnectionAttempts(0); // Reset on successful connection
             isConnectingRef.current = false;
+
+            // Start heartbeat to keep connection alive
+            heartbeatIntervalRef.current = setInterval(() => {
+                if (ws.readyState === WebSocket.OPEN) {
+                    // Send ping frame (opcode 0x9, no payload)
+                    const pingFrame = new Uint8Array([0x89, 0x00]);
+                    ws.send(pingFrame.buffer);
+                    console.log('Sent ping to Binance WS to keep connection alive');
+                }
+            }, 5 * 60 * 1000); // Every 5 minutes
         };
 
         ws.onmessage = (event) => {
@@ -101,9 +112,15 @@ export const useBinanceWebSocket = (symbols: string[]) => {
         };
 
         ws.onclose = (event) => {
-            console.log('Binance WS Closed:', event.code, event.reason);
+            console.log('Binance WS Closed:', 'Code:', event.code, 'Reason:', event.reason, 'WasClean:', event.wasClean);
             setIsConnected(false);
             isConnectingRef.current = false;
+
+            // Clear heartbeat interval
+            if (heartbeatIntervalRef.current) {
+                clearInterval(heartbeatIntervalRef.current);
+                heartbeatIntervalRef.current = null;
+            }
 
             // Don't retry if it was a deliberate close (code 1000)
             if (event.code !== 1000 && attemptCount < 3) {
@@ -117,7 +134,7 @@ export const useBinanceWebSocket = (symbols: string[]) => {
         };
 
         ws.onerror = (err) => {
-            console.error('Binance WS Error:', err);
+            console.error('Binance WS Error:', err, 'ReadyState:', ws.readyState);
             setIsConnected(false);
             isConnectingRef.current = false;
             // Error handling is done in onclose
@@ -147,6 +164,9 @@ export const useBinanceWebSocket = (symbols: string[]) => {
             }
             if (reconnectTimeoutRef.current) {
                 clearTimeout(reconnectTimeoutRef.current);
+            }
+            if (heartbeatIntervalRef.current) {
+                clearInterval(heartbeatIntervalRef.current);
             }
         };
     }, [symbolsKey, connectWebSocket]);

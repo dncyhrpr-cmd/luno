@@ -39,9 +39,9 @@ export async function POST(request: NextRequest) {
     const user = userDoc.data() as any;
     const balanceBefore = user.balance;
 
-    // Update balance
+    // Update balance atomically
     await collections.users.doc(userId).update({
-      balance: balanceBefore + amount,
+      balance: admin.firestore.FieldValue.increment(amount),
       updatedAt: admin.firestore.Timestamp.now()
     });
 

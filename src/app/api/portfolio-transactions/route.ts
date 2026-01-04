@@ -27,14 +27,17 @@ export async function GET(request: NextRequest) {
     // Fetch orders
     const ordersSnapshot = await collections.orders.where('userId', '==', userId).orderBy('createdAt', 'desc').get();
     const orders = ordersSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+    console.log(`Fetched ${orders.length} orders for user ${userId}`);
 
     // Fetch transaction requests
     const requestsSnapshot = await collections.requests.where('userId', '==', userId).orderBy('createdAt', 'desc').get();
     const transactionRequests = requestsSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+    console.log(`Fetched ${transactionRequests.length} transaction requests for user ${userId}`);
 
     // Fetch transaction history
     const historySnapshot = await collections.transactionHistory.where('userId', '==', userId).orderBy('createdAt', 'desc').get();
     const transactionHistory = historySnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+    console.log(`Fetched ${transactionHistory.length} transaction history for user ${userId}`);
 
     // Fetch active binary orders
     const activeBinaryOrdersSnapshot = await collections.orders
@@ -48,19 +51,28 @@ export async function GET(request: NextRequest) {
     const tempAssets = activeBinaryOrders.map((order: any) => ({
       id: `temp-${order.id}`,
       userId: order.userId,
-      symbol: `BINARY-${order.id}`,
-      quantity: 1,
+      symbol: `${order.symbol} Binary ${order.direction}`,
+      quantity: order.amount || 0,
       averagePrice: order.amount || 0,
       currentPrice: order.amount || 0,
       createdAt: order.createdAt,
+      expiryTime: order.expiryTime,
+      locked: true, // Binary positions are locked
+      type: 'binary'
     }));
 
     const allAssets = [...assets, ...tempAssets];
 
     // Calculate total portfolio value
     const totalPortfolioValue = user.balance + allAssets.reduce((sum: number, asset: any) => {
-      const price = asset.currentPrice || asset.averagePrice;
-      return sum + (asset.quantity * price);
+      if (asset.type === 'binary') {
+        // For binary options, the amount is already the value, don't multiply
+        return sum + (asset.quantity || 0);
+      } else {
+        // For regular assets, calculate quantity * price
+        const price = asset.currentPrice || asset.averagePrice;
+        return sum + (asset.quantity * price);
+      }
     }, 0);
 
     const portfolio = {

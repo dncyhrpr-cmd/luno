@@ -10,6 +10,9 @@
 # FIREBASE_PRIVATE_KEY
 # FIREBASE_CLIENT_EMAIL
 
+# API Base URL - Leave unset for relative paths in production
+# NEXT_PUBLIC_API_URL
+
 # Client-side Firebase (already set in environment)
 # NEXT_PUBLIC_FIREBASE_API_KEY
 # NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
@@ -18,6 +21,16 @@
 # NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
 # NEXT_PUBLIC_FIREBASE_APP_ID
 # NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+
+[[functions]]
+  name = "resolve-binary-trades"
+  directory = "netlify/functions/resolve-binary-trades"
+  schedule = "@every 30s"
+
+[[functions]]
+  name = "delete-old-resolved-trades"
+  directory = "netlify/functions/delete-old-resolved-trades"
+  schedule = "@every 30s"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"

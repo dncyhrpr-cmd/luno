@@ -10,7 +10,7 @@ export interface SafeFetchResult<T = any> {
  * safeFetch: wrapper around window.fetch that retries on network errors (TypeError: Failed to fetch).
  * Returns a normalized result object instead of throwing, and logs errors for debugging.
  */
-export async function safeFetch<T = any>(input: RequestInfo, init?: RequestInit, retries = 2, retryDelay = 800): Promise<SafeFetchResult<T>> {
+export async function safeFetch<T = any>(input: RequestInfo, init?: RequestInit, retries = 0, retryDelay = 400): Promise<SafeFetchResult<T>> {
   let attempt = 0;
   while (attempt <= retries) {
     try {

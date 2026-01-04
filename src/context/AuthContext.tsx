@@ -76,14 +76,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string): Promise<string | null> => {
     try {
-      const response = await fetch('/api/auth/login', {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+      const response = await fetch(`${baseUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
+        signal: controller.signal,
       });
 
+      clearTimeout(timeoutId);
       return await handleAuthResponse(response);
     } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.error('Login request timed out');
+        return 'Login request timed out. Please try again.';
+      }
       console.error('Login Error:', error);
       return 'Login failed. An unexpected error occurred.';
     }
@@ -91,7 +101,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signup = useCallback(async (name: string, email: string, password: string): Promise<string | null> => {
     try {
-      const signupResponse = await fetch('/api/auth/signup', {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const signupResponse = await fetch(`${baseUrl}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, password }),
@@ -124,7 +135,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const response = await fetch('/api/auth/refresh', {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const response = await fetch(`${baseUrl}/api/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: storedRefreshToken }),
@@ -154,7 +166,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const storedRefreshToken = localStorage.getItem('refreshToken');
       if (storedToken) {
         try {
-          const response = await fetch('/api/auth/session', {
+          const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+          const response = await fetch(`${baseUrl}/api/auth/session`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

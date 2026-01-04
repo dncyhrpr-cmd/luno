@@ -38,14 +38,39 @@ export async function GET(request: NextRequest) {
         
         // Fetch users from Firestore
         const usersSnapshot = await collections.users.orderBy('createdAt', 'desc').get();
-        const usersWithDetails = usersSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
-        
+        let usersWithDetails = usersSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+
         const total = usersWithDetails.length;
 
         // Implement pagination
         const startIndex = (page - 1) * limit;
         const endIndex = startIndex + limit;
-        const users = usersWithDetails.slice(startIndex, endIndex);
+        const paginatedUsers = usersWithDetails.slice(startIndex, endIndex);
+
+        // If includeDetails, fetch related data
+        let users = paginatedUsers;
+        if (includeDetails) {
+            users = await Promise.all(paginatedUsers.map(async (user: any) => {
+                // Fetch assets
+                const assetsSnapshot = await collections.assets.where('userId', '==', user.id).get();
+                const assets = assetsSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+
+                // Fetch orders (active ones, perhaps limit to recent)
+                const ordersSnapshot = await collections.orders.where('userId', '==', user.id).orderBy('createdAt', 'desc').limit(10).get();
+                const orders = ordersSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+
+                // Fetch transaction history (recent deposits/withdraws)
+                const txSnapshot = await collections.transactionHistory.where('userId', '==', user.id).orderBy('createdAt', 'desc').limit(20).get();
+                const transactionHistory = txSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
+
+                return {
+                    ...user,
+                    assets,
+                    orders,
+                    transactionHistory
+                };
+            }));
+        }
 
         const responseData = {
           users,
@@ -71,7 +96,72 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Not implemented' }, { status: 501 });
 }
 
-// PUT - Update user status or role - DISABLED
+// PUT - Update user status or role
 export async function PUT(request: NextRequest) {
-    return NextResponse.json({ error: 'Not implemented' }, { status: 501 });
+    const reqId = getRequestId(request);
+    const route = request.url;
+
+    const adminPayload = await verifyAdmin(request, reqId);
+    if (!adminPayload) {
+        return NextResponse.json({ error: 'Unauthorized or Forbidden', correlationId: reqId }, { status: 403 });
+    }
+
+    try {
+        const { userId, status, score } = await request.json();
+
+        if (!userId) {
+            structuredLog('WARN', reqId, 'Missing userId for user update', { status: 400 });
+            return NextResponse.json({ error: 'userId is required', correlationId: reqId }, { status: 400 });
+        }
+
+        if (status && !['active', 'inactive', 'banned'].includes(status)) {
+            structuredLog('WARN', reqId, 'Invalid status for user update', { status: 400 });
+            return NextResponse.json({ error: 'Invalid status. Must be active, inactive, or banned', correlationId: reqId }, { status: 400 });
+        }
+
+        if (score !== undefined && (typeof score !== 'number' || score < 0 || score > 100)) {
+            structuredLog('WARN', reqId, 'Invalid score for user update', { status: 400 });
+            return NextResponse.json({ error: 'Invalid score. Must be a number between 0 and 100', correlationId: reqId }, { status: 400 });
+        }
+
+        structuredLog('INFO', reqId, 'Updating user', { adminId: adminPayload.userId, userId, status, score });
+
+        // Prepare update object
+        const updateData: any = { updatedAt: admin.firestore.Timestamp.now() };
+        if (status) updateData.status = status;
+        if (score !== undefined) updateData.clientScore = score;
+
+        // Update user
+        await collections.users.doc(userId).update(updateData);
+
+        // Clear cache to ensure updated data is fetched
+        adminUsersCache.flushAll();
+
+        // Create audit log
+        const auditId = collections.auditLogs.doc().id;
+        await collections.auditLogs.doc(auditId).set({
+            id: auditId,
+            userId,
+            adminId: adminPayload.userId,
+            action: status && score !== undefined ? 'user_update' : status ? 'user_status_update' : 'user_score_update',
+            resourceType: 'user',
+            resourceId: userId,
+            changes: JSON.stringify(updateData),
+            status: 'success',
+            createdAt: admin.firestore.Timestamp.now()
+        });
+
+        structuredLog('INFO', reqId, 'User updated successfully', { userId, status, score, adminId: adminPayload.userId });
+        const messageParts = [];
+        if (status) messageParts.push(`status updated to ${status}`);
+        if (score !== undefined) messageParts.push(`score set to ${score}`);
+        return NextResponse.json({
+            message: `User ${messageParts.join(' and ')}`,
+            success: true,
+            correlationId: reqId
+        });
+
+    } catch (error: any) {
+        return handleApiError(reqId, error, route, 'Failed to update user status');
+    }
 }

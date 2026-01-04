@@ -247,7 +247,7 @@ export default function App({ onNavigate }: HomePageProps) {
         }
 
         try {
-            const res = await authFetch('/api/portfolio', {}, 2, 700);
+            const res = await authFetch('/api/portfolio');
             if (res.ok) {
                 setPortfolio(res.data);
             } else {
@@ -267,8 +267,9 @@ export default function App({ onNavigate }: HomePageProps) {
     useEffect(() => {
         if (!isAuthenticated) return;
         fetchPortfolio();
-        const interval = setInterval(fetchPortfolio, 30000);
-        return () => clearInterval(interval);
+        // Polling disabled to reduce loading
+        // const interval = setInterval(fetchPortfolio, 60000);
+        // return () => clearInterval(interval);
     }, [fetchPortfolio, isAuthenticated]);
 
     // Reset 401 flag when authentication changes
@@ -296,7 +297,8 @@ export default function App({ onNavigate }: HomePageProps) {
     // Fetch initial crypto data from /api/coins
     const fetchCryptoData = useCallback(async () => {
         try {
-            const response = await fetch('/api/coins');
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+            const response = await fetch(`${baseUrl}/api/coins`);
             if (!response.ok) {
                 throw new Error('Failed to fetch coins');
             }
@@ -329,7 +331,7 @@ export default function App({ onNavigate }: HomePageProps) {
     // Poll for crypto data if WebSocket is not connected
     useEffect(() => {
         if (!isConnected) {
-            const interval = setInterval(fetchCryptoData, 30000); // Poll every 30 seconds
+            const interval = setInterval(fetchCryptoData, 60000); // Poll every 60 seconds
             return () => clearInterval(interval);
         }
     }, [isConnected, fetchCryptoData]);

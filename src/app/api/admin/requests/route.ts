@@ -95,9 +95,9 @@ async function handleApprove(request: any, adminId: string) {
   // 2. Atomic transaction
   const batch = admin.firestore().batch();
 
-  // Update user balance
+  // Update user balance atomically
   batch.update(collections.users.doc(request.userId), {
-    balance: newBalance,
+    balance: admin.firestore.FieldValue.increment(balanceChange),
     updatedAt: admin.firestore.Timestamp.now()
   });
 

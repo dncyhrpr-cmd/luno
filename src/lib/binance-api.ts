@@ -16,6 +16,14 @@ export interface KlineData {
     volume: number;
 }
 
+export interface Trade {
+    id: number;
+    price: number;
+    qty: number;
+    time: number;
+    isBuyerMaker: boolean; // true if buyer is maker (sell), false if taker (buy)
+}
+
 // A singleton class to interact with the Binance API using fetch
 class BinanceAPI {
 
@@ -93,6 +101,31 @@ class BinanceAPI {
     } catch (error: any) {
       console.error(`Error getting klines for ${symbol}:`, error);
       throw new Error(`Failed to get klines for ${symbol}.`);
+    }
+  }
+
+  /**
+   * Get recent trades for a specific symbol.
+   */
+  async getTrades(symbol: string, limit: number = 100): Promise<Trade[]> {
+    try {
+      const url = `https://api.binance.com/api/v3/trades?symbol=${symbol}&limit=${limit}`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch trades: ${response.status}`);
+      }
+      const data = await response.json();
+
+      return data.map((t: any) => ({
+        id: t.id,
+        price: parseFloat(t.price),
+        qty: parseFloat(t.qty),
+        time: t.time,
+        isBuyerMaker: t.isBuyerMaker,
+      }));
+    } catch (error: any) {
+      console.error(`Error getting trades for ${symbol}:`, error);
+      throw new Error(`Failed to get trades for ${symbol}.`);
     }
   }
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { collections } from '@/lib/db';
-import admin from 'firebase-admin';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
+import { collections } from '@/lib/db';
 
 async function handleSessionCheck(request: NextRequest) {
   try {
@@ -11,34 +10,39 @@ async function handleSessionCheck(request: NextRequest) {
     }
 
     const payload = await verifyAccessToken(token);
+
     const userId = payload.userId;
 
+    // Fetch user data from Firestore
     const userDoc = await collections.users.doc(userId).get();
     if (!userDoc.exists) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
-    const user = userDoc.data() as any;
+    const userData = userDoc.data() as any;
 
-    // Safely parse roles string to array
-    let roles: string[] = [];
-    try {
-      if (typeof user.roles === 'string') {
-        roles = JSON.parse(user.roles);
-      } else if (Array.isArray(user.roles)) {
-        roles = user.roles;
+    // Parse roles
+    let userRoles: string[] = [];
+    if (Array.isArray(userData.roles)) {
+      userRoles = userData.roles;
+    } else if (typeof userData.roles === 'string') {
+      try {
+        userRoles = JSON.parse(userData.roles);
+      } catch {
+        userRoles = [userData.role || 'trader'];
       }
-    } catch (e) {
-      roles = [user.role || 'user'];
+    } else {
+      userRoles = [userData.role || 'trader'];
     }
 
     return NextResponse.json({
       user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        role: user.role,
-        roles: roles,
-        status: user.status,
+        id: userId,
+        email: userData.email,
+        username: userData.username,
+        role: userData.role || 'trader',
+        roles: userRoles,
+        migrationStatus: userData.migrationStatus || 'migrated',
+        status: 'active',
       },
       authenticated: true,
     }, { status: 200 });

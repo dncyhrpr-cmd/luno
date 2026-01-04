@@ -6,8 +6,10 @@ import { collections } from '@/lib/db';
 import admin from 'firebase-admin';
 
 export async function POST(request: NextRequest) {
+  console.time('signup-total');
   try {
     console.log('Signup route called with DATABASE_URL:', process.env.DATABASE_URL ? 'set' : 'not set');
+    console.time('signup-validation');
     const { name, email, password } = await request.json();
 
     if (!name || !email || !password) {
@@ -25,10 +27,12 @@ export async function POST(request: NextRequest) {
     if (validationResult !== true) {
       return NextResponse.json({ error: validationResult }, { status: 400 });
     }
+    console.timeEnd('signup-validation');
 
     const normalizedEmail = email.toLowerCase().trim();
 
     let userCount;
+    console.time('signup-db-checks');
     try {
       // Check if user already exists
       const existingUserSnapshot = await collections.users.where('email', '==', normalizedEmail).get();
@@ -43,6 +47,7 @@ export async function POST(request: NextRequest) {
       console.error('Database connection error:', dbError.message);
       return NextResponse.json({ error: 'Database connection failed' }, { status: 500 });
     }
+    console.timeEnd('signup-db-checks');
     const isFirstUser = userCount === 0;
     const userRole = isFirstUser ? 'admin' : 'user';
     const userRoles = isFirstUser ? ['admin'] : ['user'];
@@ -52,7 +57,9 @@ export async function POST(request: NextRequest) {
     const username = `${baseUsername}${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
 
     // Hash password
+    console.time('signup-hash');
     const passwordHash = await bcryptjs.hash(password, 10);
+    console.timeEnd('signup-hash');
 
     // Create user in Firestore
     const userId = collections.users.doc().id;
@@ -79,6 +86,7 @@ export async function POST(request: NextRequest) {
     // User created successfully in Firestore
     // Password reset functionality is handled through custom Firestore implementation
 
+    console.timeEnd('signup-total');
     return NextResponse.json(
       {
         message: 'User created successfully',

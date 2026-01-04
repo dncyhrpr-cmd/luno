@@ -104,12 +104,14 @@ async function verifyToken(token: string, secret: Uint8Array): Promise<AuthToken
     const { payload } = await jose.jwtVerify(token, secret, {
       issuer: ISSUER,
       audience: AUDIENCE,
+      clockTolerance: 30 * 60, // 30 minutes in seconds for clock skew tolerance
       // Future rotation logic would check the KID against known secrets
     });
     return payload as AuthTokenPayload;
-  } catch (error: any) {
-    console.log('verifyToken failed:', error.message);
-    throw error;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Token verification failed';
+    console.log('verifyToken failed:', message);
+    throw new Error(message);
   }
 }
 
@@ -182,50 +184,42 @@ export function extractTokenFromRequest(req: NextRequest): string | null {
  * Shared utility to verify admin privileges in API routes.
  */
 export async function verifyAdmin(request: NextRequest, reqId: string): Promise<AuthTokenPayload | null> {
-  // Temporarily disable auth check for admin endpoints in dev
-  // const token = extractTokenFromRequest(request);
-  // if (!token) {
-  //   structuredLog('WARN', reqId, 'Unauthorized: Missing token', { status: 401 });
-  //   return null;
-  // }
+  const token = extractTokenFromRequest(request);
+  if (!token) {
+    structuredLog('WARN', reqId, 'Unauthorized: Missing token', { status: 401 });
+    return null;
+  }
 
-  // try {
-  //   const payload = await verifyAccessToken(token);
+  try {
+    const payload = await verifyAccessToken(token);
 
-  //   // Normalize roles to an array
-  //   let roles: string[] = [];
-  //   if (Array.isArray(payload.roles)) {
-  //     roles = payload.roles;
-  //   } else if (typeof payload.roles === 'string') {
-  //     try {
-  //       roles = JSON.parse(payload.roles);
-  //     } catch {
-  //       roles = [payload.roles];
-  //     }
-  //   }
+    // Normalize roles to an array
+    let roles: string[] = [];
+    if (Array.isArray(payload.roles)) {
+      roles = payload.roles;
+    } else if (typeof payload.roles === 'string') {
+      try {
+        roles = JSON.parse(payload.roles);
+      } catch {
+        roles = [payload.roles];
+      }
+    }
 
-  //   if (!roles.includes('admin')) {
-  //     structuredLog('WARN', reqId, 'Forbidden: User is not an admin', {
-  //       userId: payload.userId,
-  //       roles,
-  //       status: 403
-  //     });
-  //     return null;
-  //   }
+    if (!roles.includes('admin')) {
+      structuredLog('WARN', reqId, 'Forbidden: User is not an admin', {
+        userId: payload.userId,
+        roles,
+        status: 403
+      });
+      return null;
+    }
 
-  //   return payload;
-  // } catch (error: any) {
-  //   structuredLog('WARN', reqId, 'Auth token verification failed', {
-  //     error: error.message,
-  //     status: 401
-  //   });
-  //   return null;
-  // }
-
-  // Return a mock admin payload for dev
-  return {
-    userId: 'dev-admin',
-    roles: ['admin'],
-    migrationStatus: 'migrated'
-  };
+    return payload;
+  } catch (error: any) {
+    structuredLog('WARN', reqId, 'Auth token verification failed', {
+      error: error.message,
+      status: 401
+    });
+    return null;
+  }
 }

@@ -119,6 +119,7 @@ const ProfilePage: React.FC = () => {
         feeDiscount: profileData?.feeDiscount || 'N/A',
         since: profileData?.since || 'N/A',
         securityScore: profileData?.securityScore || 'N/A',
+        clientScore: profileData?.clientScore ?? 'Not Rated',
     };
 
     const handleAction = (action: string) => {
@@ -176,6 +177,10 @@ const ProfilePage: React.FC = () => {
                             <div className="flex items-center justify-between p-4 rounded-lg bg-teal-50 dark:bg-teal-900/50">
                                 <p className="flex items-center font-semibold text-teal-700 dark:text-teal-300"><DollarSign className='w-5 h-5 mr-2'/>Fee Discount</p>
                                 <span className="text-xl font-bold text-teal-700 dark:text-teal-300">{profile.feeDiscount}</span>
+                            </div>
+                            <div className="flex items-center justify-between p-4 rounded-lg bg-green-50 dark:bg-green-900/50">
+                                <p className="font-semibold text-green-700 dark:text-green-300">Client Score</p>
+                                <span className="text-xl font-bold text-green-700 dark:text-green-300">{profile.clientScore}</span>
                             </div>
                         </div>
                     </Card>

@@ -15,6 +15,16 @@ export async function GET(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
+    // Temporary dev mode bypass
+    if (process.env.NODE_ENV === 'development') {
+      return NextResponse.json({
+        orders: [
+          { id: '1', symbol: 'BTC', type: 'buy', quantity: 0.5, price: 40000, scheduledTime: new Date().toISOString(), status: 'pending' }
+        ],
+        total: 1
+      });
+    }
+
     const ordersQuery = await collections.scheduledOrders
       .where('userId', '==', userId)
       .orderBy('createdAt', 'desc')
@@ -48,7 +58,151 @@ export async function POST(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    const { symbol, type, quantity, price, orderType, scheduledTime, triggerCondition } = await request.json();
+    const body = await request.json();
+    const { orderType } = body;
+
+    // Skip dev bypass for binary orders to enable proper testing
+
+    // Handle binary options orders
+    if (orderType === 'binary') {
+      const { symbol, direction, period, quantity, binaryAmount, profitPercent, price } = body;
+      const amount = binaryAmount || quantity;
+
+      if (!symbol || !direction || !period || !amount || !profitPercent || !price) {
+        return NextResponse.json({ error: 'Missing required fields for binary order' }, { status: 400 });
+      }
+
+      if (!['UP', 'DOWN'].includes(direction)) {
+        return NextResponse.json({ error: 'Direction must be UP or DOWN' }, { status: 400 });
+      }
+
+      if (typeof period !== 'number' || period <= 0 || period > 300) { // Max 5 minutes
+        return NextResponse.json({ error: 'Period must be a positive number <= 300 seconds' }, { status: 400 });
+      }
+
+      if (typeof amount !== 'number' || amount <= 0) {
+        return NextResponse.json({ error: 'Amount must be a positive number' }, { status: 400 });
+      }
+
+      if (typeof profitPercent !== 'number' || profitPercent <= 0) {
+        return NextResponse.json({ error: 'Profit percent must be a positive number' }, { status: 400 });
+      }
+
+      const userDoc = await collections.users.doc(userId).get();
+      if (!userDoc.exists) {
+        return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      }
+
+      const userData = userDoc.data()!;
+      const currentBalance = userData.balance || 0;
+
+      if (currentBalance < amount) {
+        return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
+      }
+
+      // Create binary order and deduct balance in transaction
+      const expiryTime = new Date(Date.now() + period * 1000);
+      let orderId!: string;
+
+      await admin.firestore().runTransaction(async (transaction) => {
+        const userRef = collections.users.doc(userId);
+
+        // Get current balance
+        const userSnap = await transaction.get(userRef) as unknown as admin.firestore.DocumentSnapshot;
+        const balanceBefore = userSnap.exists ? userSnap.data()?.balance || 0 : 0;
+
+        if (balanceBefore < amount) {
+          throw new Error('Insufficient balance');
+        }
+
+        // Deduct amount from balance
+        transaction.update(userRef, {
+          balance: admin.firestore.FieldValue.increment(-amount)
+        });
+
+        // Create binary order
+        const orderRef = collections.orders.doc();
+        transaction.set(orderRef, {
+          userId,
+          symbol: symbol.toUpperCase(),
+          orderType: 'binary',
+          direction,
+          period,
+          amount,
+          profitPercent,
+          entryPrice: price,
+          status: 'active',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          expiryTime: admin.firestore.Timestamp.fromDate(expiryTime)
+        });
+
+        orderId = orderRef.id;
+
+        // Create binary asset
+        const assetRef = collections.assets.doc();
+        transaction.set(assetRef, {
+          userId,
+          symbol: symbol.toUpperCase(),
+          quantity: amount,
+          averagePrice: price,
+          type: 'binary',
+          expiryTime: expiryTime,
+          orderId,
+          direction,
+          profitPercent,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          status: 'active'
+        });
+      });
+
+      // Audit log
+      await collections.auditLogs.add({
+        userId,
+        action: 'binary_order_created',
+        resourceType: 'binary_order',
+        resourceId: orderId,
+        changes: {
+          symbol: symbol.toUpperCase(),
+          direction,
+          amount,
+          period,
+          profitPercent
+        },
+        status: 'success',
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Alert
+      await collections.alerts.add({
+        userId,
+        type: 'order',
+        title: 'Binary Order Placed',
+        message: `Your ${direction} binary order for ${amount} expires in ${period} seconds.`,
+        read: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      return NextResponse.json({
+        order: {
+          id: orderId,
+          userId,
+          symbol: symbol.toUpperCase(),
+          orderType: 'binary',
+          direction,
+          period,
+          amount,
+          profitPercent,
+          entryPrice: price,
+          status: 'active',
+          expiryTime: expiryTime.toISOString()
+        },
+        message: 'Binary order created successfully',
+        success: true
+      });
+    }
+
+    // Handle scheduled orders (existing logic)
+    const { symbol, type, quantity, price, scheduledTime, triggerCondition } = body;
 
     if (!symbol || !type || !quantity || !scheduledTime) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -133,7 +287,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
 
-    return NextResponse.json({ error: 'Failed to create scheduled order' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to create order' }, { status: 500 });
   }
 }
 

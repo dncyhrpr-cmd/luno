@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
     const userId = payload.userId;
     structuredLog('INFO', reqId, 'Token verified, fetching portfolio', { route, userId });
 
+
+
     // Atomically fetch user and assets
     const [userDoc, assetsQuery] = await Promise.all([
       collections.users.doc(userId).get(),
@@ -37,7 +39,13 @@ export async function GET(request: NextRequest) {
     // In a real-world scenario, you might enrich asset data with real-time prices here
     // For now, we use the stored average price.
 
-    const totalAssetValue = assets.reduce((sum: number, asset: any) => sum + (asset.quantity * asset.averagePrice), 0);
+    const totalAssetValue = assets.reduce((sum: number, asset: any) => {
+      if (asset.type === 'binary') {
+        return sum + asset.quantity;
+      } else {
+        return sum + (asset.quantity * asset.averagePrice);
+      }
+    }, 0);
     const totalPortfolioValue = user.balance + totalAssetValue;
 
     structuredLog('INFO', reqId, 'Successfully fetched portfolio', { userId, status: 200, assetCount: assets.length });
@@ -104,7 +112,7 @@ export async function POST(request: NextRequest) {
     }
 
     // --- Database Operations ---
-    await collections.users.doc(userId).update({ balance: newBalance });
+    await collections.users.doc(userId).update({ balance: admin.firestore.FieldValue.increment(type === 'deposit' ? amount : -amount) });
 
     // Create a transaction history record
     await collections.transactionHistory.add({

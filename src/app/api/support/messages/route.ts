@@ -13,6 +13,17 @@ export async function GET(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
+    // Temporary dev mode bypass
+    if (process.env.NODE_ENV === 'development') {
+      return NextResponse.json({
+        chatId: 'dev-chat',
+        messages: [
+          { id: '1', sender: 'user', text: 'Hello, I need help', timestamp: new Date().toISOString() },
+          { id: '2', sender: 'support', text: 'Hi! How can I help you today?', timestamp: new Date().toISOString() }
+        ]
+      });
+    }
+
     // Find or create chat for user
     let chatQuery = await collections.chats.where('userId', '==', userId).limit(1).get();
     let chat: any = null;
@@ -61,6 +72,16 @@ export async function POST(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
     const { text } = await request.json();
+
+    // Temporary dev mode bypass
+    if (process.env.NODE_ENV === 'development') {
+      return NextResponse.json({
+        id: 'dev-message-' + Date.now(),
+        sender: 'user',
+        text: text.trim(),
+        timestamp: new Date().toISOString()
+      });
+    }
 
     if (!text?.trim()) {
       return NextResponse.json({ error: 'Message text is required' }, { status: 400 });

@@ -4,7 +4,7 @@ import React, { useState, useMemo, useEffect, useCallback, Suspense } from 'reac
 import {
   Shield, Users, Activity, Ban, PlusCircle, MinusCircle,
   Search, Check, X, Trash2, Wallet, ArrowUpRight,
-  History, PieChart, ShieldAlert, TrendingUp, DollarSign, RefreshCw
+  History, PieChart, ShieldAlert, TrendingUp, DollarSign, RefreshCw, Star
 } from 'lucide-react';
 import ProtectedRoute from '../ProtectedRoute';
 import { useAuthFetch } from '../../lib/authFetch';
@@ -36,6 +36,7 @@ interface ClientUser {
   orders: any[]; // Active orders
   status: 'active' | 'inactive' | 'banned';
   joinedDate: string;
+  clientScore: number | null;
 }
 
 // --- Component: Financial Profile Drawer ---
@@ -48,7 +49,8 @@ const ClientProfileDrawer: React.FC<{
   onStatusChange: () => void;
   onResolve: (assetId: string, outcome: 'win' | 'loss') => void;
   onLock: (assetId: string, locked: boolean) => void;
-}> = ({ user, onClose, onSeize, onRestore, onCredit, onStatusChange, onResolve, onLock }) => {
+  onSetScore: (userId: string) => void;
+}> = ({ user, onClose, onSeize, onRestore, onCredit, onStatusChange, onResolve, onLock, onSetScore }) => {
   const activeOrders = user.orders || [];
 
   const totalCryptoValue = useMemo(() =>
@@ -87,7 +89,7 @@ const ClientProfileDrawer: React.FC<{
           </div>
 
           {/* Quick Stats Grid */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div key="deposits" className="p-5 border bg-gray-50 dark:bg-gray-900 rounded-2xl dark:border-gray-800">
               <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Deposits</p>
               <p className="text-lg font-black dark:text-white text-emerald-500">${user.totalDeposited.toLocaleString()}</p>
@@ -95,6 +97,10 @@ const ClientProfileDrawer: React.FC<{
             <div key="withdrawn" className="p-5 border bg-gray-50 dark:bg-gray-900 rounded-2xl dark:border-gray-800">
               <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Withdrawn</p>
               <p className="text-lg font-black dark:text-white text-rose-500">${user.totalWithdrawn.toLocaleString()}</p>
+            </div>
+            <div key="score" className="p-5 border bg-gray-50 dark:bg-gray-900 rounded-2xl dark:border-gray-800">
+              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Client Score</p>
+              <p className="text-lg font-black text-blue-500 dark:text-white">{user.clientScore !== null ? user.clientScore : 'Not Rated'}</p>
             </div>
           </div>
 
@@ -114,12 +120,12 @@ const ClientProfileDrawer: React.FC<{
                 return (
                   <div key={asset.symbol + asset.quantity} className="flex flex-col p-4 transition-all bg-white border md:flex-row md:items-center md:justify-between md:p-5 dark:bg-gray-900 rounded-2xl dark:border-gray-800 hover:border-rose-500/50 group">
                     <div className="flex-1">
-                      <p className="text-sm font-black dark:text-white">{asset.symbol.replace('USDT','').replace('BINARY-','Binary ')}</p>
+                      <p className="text-sm font-black text-gray-900 dark:text-white">{asset.symbol.replace('USDT','').replace('BINARY-','Binary ')}</p>
                       <p className="text-[10px] text-gray-500 font-bold">{asset.quantity.toLocaleString()} {isBinary ? 'Position' : 'Tokens'} @ ${asset.currentPrice.toLocaleString()}</p>
                       {asset.locked && <p className="text-[9px] text-orange-500 font-bold">LOCKED</p>}
                     </div>
                     <div className="flex items-center justify-between mt-2 md:mt-0">
-                      <p className="text-sm font-black dark:text-white">${(asset.quantity * asset.currentPrice).toLocaleString()}</p>
+                      <p className="text-sm font-black text-gray-900 dark:text-white">${(asset.quantity * asset.currentPrice).toLocaleString()}</p>
                       <div className="flex ml-4 space-x-1 md:space-x-2">
                         {isBinary ? (
                           <>
@@ -168,9 +174,9 @@ const ClientProfileDrawer: React.FC<{
                 {activeOrders.map((order) => (
                   <div key={order.id} className="p-5 bg-white border dark:bg-gray-900 rounded-2xl dark:border-gray-800">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-black dark:text-white">{order.symbol}</span>
+                      <span className="text-sm font-black text-gray-900 dark:text-white">{order.symbol}</span>
                       <span className={`px-2 py-1 text-xs font-black rounded ${order.type === 'buy' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
-                        {order.type.toUpperCase()}
+                        {(order.type || 'unknown').toUpperCase()}
                       </span>
                     </div>
                     <div className="text-[10px] text-gray-500 font-bold">
@@ -522,6 +528,39 @@ const AdminPage: React.FC = () => {
     }
   };
 
+  const handleSetScore = async (userId: string) => {
+    const scoreInput = prompt('Enter client score (0-100):');
+    if (scoreInput === null) return;
+    const score = parseInt(scoreInput);
+    if (isNaN(score) || score < 0 || score > 100) {
+      alert('Invalid score. Must be a number between 0 and 100.');
+      return;
+    }
+
+    try {
+      const res = await authFetch('/api/admin/users', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, score })
+      });
+
+      if (res.ok) {
+        // Update local state
+        setUsers(users.map(u => u.id === userId ? { ...u, clientScore: score } : u));
+        if (selectedUser && selectedUser.id === userId) {
+          setSelectedUser({ ...selectedUser, clientScore: score });
+        }
+        alert(`Client score set to ${score}`);
+      } else {
+        alert('Failed to update client score');
+      }
+    } catch (error) {
+      alert('Error updating client score');
+    }
+  };
+
   return (
     <ProtectedRoute requiredRole="admin">
       <div className="min-h-screen bg-[#f8f9fc] dark:bg-[#0a0c10] p-6 md:p-12">
@@ -602,7 +641,7 @@ const AdminPage: React.FC = () => {
                         <th className="px-4 md:px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Client Information</th>
                         <th className="px-4 md:px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Liquid Balance</th>
                         <th className="px-4 md:px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Active Trades</th>
-                        <th className="px-4 md:px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Exposure</th>
+                        <th className="px-4 md:px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Client Score</th>
                         <th className="px-4 md:px-8 py-5 text-right text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Action</th>
                       </tr>
                     </thead>
@@ -652,6 +691,12 @@ const AdminPage: React.FC = () => {
                             </div>
                           </td>
                           <td className="px-4 py-6 text-right md:px-8">
+                            <button
+                              onClick={() => handleSetScore(user.id)}
+                              className="px-4 md:px-6 py-2.5 bg-blue-100 dark:bg-blue-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all mb-2"
+                            >
+                              Set Score
+                            </button>
                             <button className="px-4 md:px-6 py-2.5 bg-gray-100 dark:bg-gray-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all">
                               Manage Profile
                             </button>
@@ -691,6 +736,7 @@ const AdminPage: React.FC = () => {
               onStatusChange={handleStatusChange}
               onResolve={handleResolveAsset}
               onLock={handleLockAsset}
+              onSetScore={handleSetScore}
             />
           </>
         )}

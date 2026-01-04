@@ -1,47 +1,65 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateAuthTokens } from '@/lib/auth-utils';
 import bcryptjs from 'bcryptjs';
-import { collections } from '@/lib/db';
-import admin from 'firebase-admin';
+
+function createCORSResponse(data: any, status: number = 200) {
+  const response = NextResponse.json(data, { status });
+  response.headers.set('Access-Control-Allow-Origin', '*');
+  response.headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  response.headers.set('Access-Control-Allow-Headers', 'Content-Type');
+  return response;
+}
+
+export async function OPTIONS(request: NextRequest) {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
+}
 
 export async function POST(request: NextRequest) {
+
   try {
     const { email, password } = await request.json();
-    console.log('Login attempt for email:', email);
 
     if (!email || !password) {
-      return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
+      return createCORSResponse({ error: 'Email and password are required' }, 400);
     }
 
     if (typeof email !== 'string' || !email.includes('@')) {
-      return NextResponse.json({ error: 'Invalid email format' }, { status: 400 });
+      return createCORSResponse({ error: 'Invalid email format' }, 400);
     }
 
     if (typeof password !== 'string' || password.length === 0) {
-      return NextResponse.json({ error: 'Invalid password format' }, { status: 400 });
+      return createCORSResponse({ error: 'Invalid password format' }, 400);
     }
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    console.log('Finding user by email');
+    // Lazy import to avoid webpack issues
+    const { collections } = await import('@/lib/db');
+
     // Fetch user from Firestore by email
     const userSnapshot = await collections.users.where('email', '==', normalizedEmail).get();
     const user = !userSnapshot.empty ? { id: userSnapshot.docs[0].id, ...userSnapshot.docs[0].data() } as any : null;
-    console.log('User found:', !!user, user ? user.email : 'none');
 
     if (!user) {
-      return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+      return createCORSResponse({ error: 'Invalid email or password' }, 401);
     }
 
     // Verify password hash
     const passwordField = user.password;
     if (!passwordField) {
-      return NextResponse.json(
+      return createCORSResponse(
         {
           error: 'Password not set for this account. Please use password reset functionality.',
           code: 'NO_PASSWORD_SET'
         },
-        { status: 401 }
+        401
       );
     }
 
@@ -50,10 +68,10 @@ export async function POST(request: NextRequest) {
       isPasswordValid = await bcryptjs.compare(password, passwordField);
     } catch (bcryptError: any) {
       console.error('Password comparison error:', bcryptError);
-      return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+      return createCORSResponse({ error: 'Invalid email or password' }, 401);
     }
     if (!isPasswordValid) {
-      return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+      return createCORSResponse({ error: 'Invalid email or password' }, 401);
     }
 
     // Ensure roles is an array
@@ -72,26 +90,23 @@ export async function POST(request: NextRequest) {
 
     console.log('User roles parsed:', userRoles);
 
-    console.log('About to generate tokens');
     const tokens = await generateAuthTokens({
       id: user.id,
       roles: JSON.stringify(userRoles),
       migrationStatus: user.migrationStatus as any,
     });
-    console.log('Tokens generated successfully');
 
     console.log('Generated tokens for user:', user.id, 'roles:', userRoles);
 
     // Update last login timestamp
     try {
       await collections.users.doc(user.id).update({
-        lastLogin: admin.firestore.Timestamp.now()
+        lastLogin: new Date()
       });
     } catch (error) {
       console.error('Failed to update last login:', error);
     }
-
-    return NextResponse.json({
+    return createCORSResponse({
       message: 'Login successful',
       user: {
         id: user.id,
@@ -102,11 +117,11 @@ export async function POST(request: NextRequest) {
       },
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-    }, { status: 200 });
+    }, 200);
 
   } catch (error: any) {
     console.error('Login error:', error);
     console.error('Error stack:', error.stack);
-    return NextResponse.json({ error: 'Login failed' }, { status: 500 });
+    return createCORSResponse({ error: 'Login failed' }, 500);
   }
 }

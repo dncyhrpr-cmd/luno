@@ -14,6 +14,24 @@ export async function GET(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
+    // Temporary dev mode bypass
+    if (process.env.NODE_ENV === 'development') {
+      return NextResponse.json({
+        profile: {
+          id: 'dev-user',
+          username: 'devuser',
+          email: 'dev@example.com',
+          balance: 10000,
+          role: 'trader',
+          status: 'active',
+          lastLogin: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          kycStatus: 'unsubmitted',
+          clientScore: 50
+        }
+      });
+    }
+
     const userDoc = await collections.users.doc(userId).get();
 
     if (!userDoc.exists) {
@@ -26,6 +44,28 @@ export async function GET(request: NextRequest) {
     const kycQuery = await collections.kycData.where('userId', '==', userId).limit(1).get();
     const kycData = kycQuery.empty ? null : kycQuery.docs[0].data();
 
+    // Calculate tier based on clientScore
+    const clientScore = user.clientScore || 0;
+    let tier = 'Bronze';
+    if (clientScore >= 90) tier = 'Platinum';
+    else if (clientScore >= 80) tier = 'Gold';
+    else if (clientScore >= 70) tier = 'Silver';
+
+    // Fee discount based on tier
+    const feeDiscounts = { Bronze: '0%', Silver: '5%', Gold: '10%', Platinum: '15%' };
+    const feeDiscount = feeDiscounts[tier as keyof typeof feeDiscounts];
+
+    // Since date
+    const since = user.createdAt ? new Date(user.createdAt.seconds * 1000).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long'
+    }) : 'Unknown';
+
+    // Security score based on 2FA and other factors
+    let securityScore = 20; // Base
+    if (user.twoFactorEnabled) securityScore += 40;
+    if (kycData?.status === 'approved') securityScore += 40;
+
     const profile = {
       id: userDoc.id,
       username: user.username,
@@ -37,7 +77,12 @@ export async function GET(request: NextRequest) {
       createdAt: user.createdAt,
       kycStatus: kycData?.status || 'unsubmitted',
       kycSubmittedAt: kycData?.submittedAt,
-      kycVerifiedAt: kycData?.verifiedAt
+      kycVerifiedAt: kycData?.verifiedAt,
+      clientScore: user.clientScore || null,
+      tier,
+      feeDiscount,
+      since,
+      securityScore: Math.min(securityScore, 100) // Max 100
     };
 
     return NextResponse.json({ profile });
@@ -62,6 +107,18 @@ export async function PUT(request: NextRequest) {
     const userId = payload.userId;
 
     const { username, email } = await request.json();
+
+    // Temporary dev mode bypass
+    if (process.env.NODE_ENV === 'development') {
+      return NextResponse.json({
+        message: 'Profile updated successfully',
+        profile: {
+          id: 'dev-user',
+          username: username || 'devuser',
+          email: email || 'dev@example.com'
+        }
+      });
+    }
 
     if (!username || !email) {
       return NextResponse.json({ error: 'Username and email are required' }, { status: 400 });

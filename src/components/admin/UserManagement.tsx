@@ -35,6 +35,7 @@ interface User {
     status: 'active' | 'inactive' | 'banned';
     balance: number;
     createdAt: any;
+    clientScore: number | null;
 }
 
 const UserManagement: React.FC = () => {
@@ -93,6 +94,40 @@ const UserManagement: React.FC = () => {
         }
     }, [user]);
 
+    const handleSetScore = useCallback(async (userId: string) => {
+        if (!user || !user.accessToken) return;
+        const scoreInput = prompt('Enter client score (0-100):');
+        if (scoreInput === null) return;
+        const score = parseInt(scoreInput);
+        if (isNaN(score) || score < 0 || score > 100) {
+            alert('Invalid score. Must be a number between 0 and 100.');
+            return;
+        }
+        try {
+            const response = await fetch('/api/admin/users', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${user.accessToken}`
+                },
+                body: JSON.stringify({ userId, score })
+            });
+
+            if (response.ok) {
+                setUsers(prevUsers =>
+                    prevUsers.map(u =>
+                        u.id === userId ? { ...u, clientScore: score } : u
+                    )
+                );
+                alert(`User score set to ${score}`);
+            } else {
+                alert('Failed to update user score');
+            }
+        } catch (error: any) {
+            alert('Error updating user score');
+        }
+    }, [user]);
+
     if (isLoading) {
         return <p>Loading users...</p>;
     }
@@ -121,6 +156,7 @@ const UserManagement: React.FC = () => {
                                 <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Role</th>
                                 <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Status</th>
                                 <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Balance</th>
+                                <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Score</th>
                                 <th className="px-6 py-3 text-xs font-medium tracking-wider text-left text-gray-500 uppercase dark:text-gray-400">Actions</th>
                             </tr>
                         </thead>
@@ -142,6 +178,9 @@ const UserManagement: React.FC = () => {
                                     <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap dark:text-white">
                                         ${user.balance.toFixed(2)}
                                     </td>
+                                    <td className="px-6 py-4 text-sm text-gray-900 whitespace-nowrap dark:text-white">
+                                        {user.clientScore !== null ? user.clientScore : 'N/A'}
+                                    </td>
                                     <td className="px-6 py-4 text-sm font-medium text-right whitespace-nowrap">
                                         <button
                                             onClick={() => handleToggleUserStatus(user.id, user.status === 'active' ? 'inactive' : 'active')}
@@ -151,9 +190,15 @@ const UserManagement: React.FC = () => {
                                         </button>
                                         <button
                                             onClick={() => handleToggleUserStatus(user.id, 'banned')}
-                                            className="text-red-600 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300"
+                                            className="mr-3 text-red-600 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300"
                                         >
                                             Ban
+                                        </button>
+                                        <button
+                                            onClick={() => handleSetScore(user.id)}
+                                            className="text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300"
+                                        >
+                                            Set Score
                                         </button>
                                     </td>
                                 </tr>

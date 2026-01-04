@@ -34,13 +34,7 @@ async function checkUsers() {
     snapshot.forEach((doc) => {
       const user = doc.data();
       console.log(`\nUser ID: ${doc.id}`);
-      console.log(`  Email: ${user.email}`);
-      console.log(`  Username: ${user.username}`);
-      console.log(`  Role: ${user.role}`);
-      console.log(`  Roles: ${user.roles}`);
-      console.log(`  Status: ${user.status}`);
-      console.log(`  Balance: ${user.balance}`);
-      console.log(`  Created At: ${user.createdAt}`);
+      console.log('Full user data:', JSON.stringify(user, null, 2));
     });
 
   } catch (error) {

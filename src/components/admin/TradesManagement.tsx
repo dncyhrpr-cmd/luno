@@ -12,7 +12,7 @@ interface BinaryTrade {
   id: string;
   assetId: string | null;
   userId: string;
-  username: string;
+  userEmail: string;
   symbol: string;
   quantity: number;
   entryPrice: number;
@@ -152,7 +152,7 @@ const TradesManagement: React.FC = () => {
     let successCount = 0;
     for (const tradeId of selectedTrades) {
       const trade = binaryTrades.find(t => t.id === tradeId);
-      if (trade) {
+      if (trade && trade.canResolve) {
         try {
           const res = await authFetch('/api/admin/assets/resolve', {
             method: 'POST',
@@ -239,7 +239,7 @@ const TradesManagement: React.FC = () => {
   };
 
   const filteredTrades = binaryTrades.filter(trade =>
-    trade.username.toLowerCase().includes(search.toLowerCase()) ||
+    trade.userEmail.toLowerCase().includes(search.toLowerCase()) ||
     trade.symbol.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -286,6 +286,31 @@ const TradesManagement: React.FC = () => {
           <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           Refresh
         </button>
+        {activeSubTab === 'resolution' && (
+          <button
+            onClick={async () => {
+              if (!confirm('Auto-resolve all expired binary trades based on current prices?')) return;
+
+              try {
+                const res = await authFetch('/api/admin/trades/binary/resolve-expired', {
+                  method: 'POST'
+                });
+
+                if (res.ok) {
+                  alert(`Auto-resolved ${res.data?.resolvedCount || 0} trades`);
+                  fetchBinaryTrades(true);
+                } else {
+                  alert('Failed to auto-resolve trades');
+                }
+              } catch (error) {
+                alert('Error auto-resolving trades');
+              }
+            }}
+            className="flex items-center gap-2 px-4 py-2 text-white bg-green-600 rounded-xl hover:bg-green-700"
+          >
+            Auto-Resolve Expired
+          </button>
+        )}
       </div>
 
       {activeSubTab === 'resolution' ? (
@@ -370,7 +395,7 @@ const TradesManagement: React.FC = () => {
                         </button>
                       </td>
                       <td className="px-4 py-4 md:px-6">
-                        <div className="font-black text-gray-900 dark:text-white">{trade.username}</div>
+                        <div className="font-black text-gray-900 dark:text-white">{trade.userEmail}</div>
                         <div className="text-[10px] text-gray-500 font-bold uppercase">ID: {trade.userId.slice(-8)}</div>
                       </td>
                       <td className="px-4 py-4 md:px-6">

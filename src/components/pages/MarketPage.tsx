@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { ArrowUp, ArrowDown, Wallet, Clock, TrendingUp, TrendingDown, Layers, Target, AlertCircle, CheckCircle, X } from 'lucide-react';
+import { ArrowUp, ArrowDown, Wallet, Clock, TrendingUp, TrendingDown, Layers, Target, AlertCircle, CheckCircle, X, Zap, DollarSign, Timer, TrendingUp as TrendingUpIcon, BarChart3 } from 'lucide-react';
 import { useBinanceWebSocket, PriceUpdate } from '../../hooks/useBinanceWebSocket';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthFetch } from '../../lib/authFetch';
 import { safeFetch } from '../../lib/safeFetch';
 import { useBalance } from '@/hooks/useBalance';
 import { useCoin } from '@/context/CoinContext';
+import TradeComponent from '../TradeComponent';
 
 // Import chart components
 import { 
@@ -85,10 +86,32 @@ const PERIODS = [
 
 // --- COMPONENTS ---
 const Card: React.FC<CardProps> = React.memo(({ title, children, className = '' }) => (
-    <div className={`bg-white dark:bg-gray-800 p-4 md:p-6 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 transition-colors duration-300 ${className}`}>
-        {title && <h2 className="mb-4 text-lg font-semibold text-gray-800 md:text-xl dark:text-gray-100">{title}</h2>}
-        {children}
-    </div>
+    <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: "easeOut" }}
+        className={`relative bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl p-6 md:p-8 rounded-2xl shadow-2xl shadow-black/5 dark:shadow-black/20 border border-gray-200/50 dark:border-gray-700/50 overflow-hidden ${className}`}
+        style={{
+            background: 'linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(249,250,251,0.95) 100%)',
+        }}
+    >
+        {/* Subtle gradient overlay */}
+        <div className="absolute inset-0 pointer-events-none bg-gradient-to-br from-white/20 via-transparent to-black/5 dark:from-white/5 dark:to-black/10" />
+
+        <div className="relative z-10">
+            {title && (
+                <motion.h2
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.1, duration: 0.3 }}
+                    className="mb-6 text-xl font-bold tracking-tight text-gray-900 dark:text-white"
+                >
+                    {title}
+                </motion.h2>
+            )}
+            {children}
+        </div>
+    </motion.div>
 ));
 
 Card.displayName = 'Card';
@@ -115,6 +138,7 @@ const MarketPage: React.FC = () => {
     const { prices, isConnected } = useBinanceWebSocket(coinSymbols);
     const [currentPrice, setCurrentPrice] = useState<number>(0);
     const [priceChange, setPriceChange] = useState<number>(0);
+    const [currentVolume, setCurrentVolume] = useState<number>(0);
     const [timeframe, setTimeframe] = useState<string>('60s');
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [dataFetchError, setDataFetchError] = useState<string | null>(null);
@@ -130,7 +154,7 @@ const MarketPage: React.FC = () => {
     const [binarySubmitting, setBinarySubmitting] = useState(false);
     const [binaryStatus, setBinaryStatus] = useState<{ ok: boolean; msg: string } | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [showConfirm, setShowConfirm] = useState(false);
+
     const [chartHeight, setChartHeight] = useState(650); // default to lg
     const [margin, setMargin] = useState({ left: 30, right: 40, top: 10, bottom: 30 });
 
@@ -146,6 +170,7 @@ const MarketPage: React.FC = () => {
         if (priceUpdate && chartHistory.length > 0) {
             setCurrentPrice(priceUpdate.price);
             setPriceChange(priceUpdate.change);
+            setCurrentVolume(priceUpdate.volume);
 
             setChartHistory(prevHistory => {
                 let currentHistory = prevHistory;
@@ -383,11 +408,13 @@ const MarketPage: React.FC = () => {
 
 
     // Binary order submission
-    async function submitOrderBinary() {
-        if (!canSubmitBinary || !selectedCoin) return;
+    async function submitOrderBinary(direction: Direction, period: number = 30, amount: number = 10) {
+        if (!selectedCoin || !isAuthenticated || amount > balance) return;
 
         setBinarySubmitting(true);
         setBinaryStatus(null);
+
+        const profitPercent = PERIODS.find(p => p.time === period)?.profit || 20;
 
         const res = await authFetch('/api/orders', {
             method: 'POST',
@@ -395,29 +422,20 @@ const MarketPage: React.FC = () => {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                type: direction === 'UP' ? 'buy' : 'sell',
-                symbol: `${selectedCoin.symbol}USDT`,
-                quantity: binaryAmount,
-                price: currentPrice,
                 orderType: 'binary',
-                leverage: 1, // or whatever
-                // additional binary fields
+                symbol: `${selectedCoin.symbol}USDT`,
                 direction,
-                period: orderPeriod,
+                period,
+                binaryAmount: amount,
                 profitPercent,
-                binaryAmount,
+                price: currentPrice,
             }),
         });
 
         if (res.ok) {
             setBinaryStatus({ ok: true, msg: 'Order placed successfully' });
-            setBinaryAmount(0);
-            setDirection(null);
-            setOrderPeriod(null);
             // Refresh balance immediately after order placement
             refreshBalance();
-            setIsModalOpen(false);
-            setShowConfirm(false);
         } else {
             setBinaryStatus({ ok: false, msg: res.error || 'Order failed' });
         }
@@ -456,21 +474,37 @@ const MarketPage: React.FC = () => {
     }
 
     return (
-        <div className="min-h-screen p-4 space-y-6 bg-gray-50 dark:bg-gray-900 md:p-8">
-            {/* Status Messages */}
+        <div className="min-h-screen p-4 space-y-8 md:p-8 bg-gray-50 dark:bg-gray-900">
 
-            {dataFetchError && (
-                <div className="flex items-center p-4 text-red-700 bg-red-100 border rounded-lg">
-                    <AlertCircle className="w-5 h-5 mr-3" />
-                    <p>{dataFetchError}</p>
-                </div>
-            )}
-            {!isConnected && !dataFetchError && (
-                 <div className="flex items-center p-4 text-yellow-700 bg-yellow-100 border rounded-lg">
-                    <AlertCircle className="w-5 h-5 mr-3" />
-                    <p>Connecting to real-time data feed...</p>
-                </div>
-            )}
+            <div className="relative z-10 space-y-6">
+                {/* Status Messages */}
+                <AnimatePresence>
+                    {dataFetchError && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                            className="flex items-center p-4 text-red-400 border shadow-xl bg-red-500/10 backdrop-blur-xl border-red-500/20 rounded-2xl"
+                        >
+                            <AlertCircle className="w-5 h-5 mr-3 text-red-400" />
+                            <p className="font-medium">{dataFetchError}</p>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                    {!isConnected && !dataFetchError && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                            className="flex items-center p-4 text-yellow-400 border shadow-xl bg-yellow-500/10 backdrop-blur-xl border-yellow-500/20 rounded-2xl"
+                        >
+                            <div className="w-2 h-2 mr-3 bg-yellow-400 rounded-full animate-pulse" />
+                            <p className="font-medium">Connecting to real-time data feed...</p>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
 
             <div className="grid grid-cols-1 gap-4 md:gap-6 lg:grid-cols-3 xl:grid-cols-4">
                 <Card className="lg:col-span-2 xl:col-span-3">
@@ -515,61 +549,176 @@ const MarketPage: React.FC = () => {
                                 </Chart>
                             </ResponsiveChartCanvas>
                         ) : (
-                            <div className="flex items-center justify-center h-full"><p className="text-xl text-gray-400">{dataFetchError || 'No chart data available.'}</p></div>
+                            <div className="flex items-center justify-center h-full"><p className="text-xl text-gray-800">{dataFetchError || 'No chart data available.'}</p></div>
                         )}
                     </div>
                     </>
                 </Card>
 
-                <Card className="lg:col-span-1 bg-white dark:bg-[#0B0E11] border border-gray-200 dark:border-[#2B2F36] rounded-xl shadow-2xl">
+                <Card className="lg:col-span-1">
                   <div className="flex flex-col h-full">
 
                     {/* Header Section */}
-                    <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-[#2B2F36]">
-                      <h2 className="text-base md:text-sm font-bold text-gray-900 dark:text-[#EAECEF] flex items-center gap-2">
-                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                        Trade {selectedCoin!.symbol}
-                      </h2>
+                    <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: 0.3, duration: 0.4 }}
+                        className="flex items-center justify-between p-6 border-b border-white/10"
+                    >
+                      <motion.h2
+                          className="flex items-center gap-3 text-xl font-bold text-gray-900 dark:text-white"
+                          whileHover={{ scale: 1.02 }}
+                      >
+                        <motion.div
+                            animate={{ scale: [1, 1.1, 1] }}
+                            transition={{ duration: 2, repeat: Infinity }}
+                            className="w-3 h-3 bg-green-400 rounded-full shadow-lg shadow-green-400/50"
+                        />
 
-                    </div>
+                      </motion.h2>
 
-                    <div className="p-4 space-y-5">
+
+                    </motion.div>
+
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.4, duration: 0.4 }}
+                        className="p-6 space-y-6"
+                    >
                       {/* Coin Selection */}
-                      <div className="space-y-2">
-                        <label className="text-xs md:text-[11px] text-gray-500 dark:text-[#848E9C] font-medium">Select Asset</label>
-                        <select
+                      <motion.div
+                          className="space-y-3"
+                          whileHover={{ scale: 1.01 }}
+                      >
+                        <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-white/80">
+                          <Target className="w-4 h-4 text-blue-400" />
+                          Select Asset
+                        </label>
+                        <motion.select
                             value={selectedCoin.id}
                             onChange={(e) => {
                                 const coin = allCoins.find(c => c.id === e.target.value);
                                 if (coin) setSelectedCoin(coin);
                             }}
-                            className="w-full bg-gray-100 dark:bg-[#2B2F36] border border-transparent focus:border-blue-500 rounded p-3 md:p-2.5 text-base md:text-sm text-gray-900 dark:text-white outline-none transition-all"
+                            className="w-full px-4 py-3 text-gray-900 placeholder-gray-500 transition-all duration-300 border border-gray-300 dark:text-white bg-white/90 dark:bg-gray-800 dark:border-gray-600 rounded-xl dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                            whileFocus={{ scale: 1.02 }}
                         >
                             {filteredCoins.map(coin => (
-                                <option key={coin.id} value={coin.id}>{coin.name} ({coin.symbol})</option>
+                                <option key={coin.id} value={coin.id} className="text-white bg-gray-800">
+                                    {coin.name} ({coin.symbol})
+                                </option>
                             ))}
-                        </select>
-                      </div>
+                        </motion.select>
+                      </motion.div>
 
-                      <div className="text-center">
-                <h1 className="text-lg font-bold">{selectedCoin?.symbol}/USDT</h1>
-                <p className="text-3xl font-extrabold">${currentPrice.toFixed(2)}</p>
-            </div>
+                      {/* Current Price Display */}
+                      <motion.div
+                          className="p-6 text-center border bg-gradient-to-r from-white/5 to-white/10 backdrop-blur-sm rounded-2xl border-white/10"
+                          initial={{ scale: 0.9, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          transition={{ delay: 0.5, duration: 0.3 }}
+                      >
+                        <motion.h1
+                            className="mb-2 text-lg font-bold text-gray-700 dark:text-white/80"
+                            animate={{ opacity: [0.7, 1, 0.7] }}
+                            transition={{ duration: 2, repeat: Infinity }}
+                        >
+                            {selectedCoin?.symbol}/USDT
+                        </motion.h1>
+                        <motion.p
+                            className="text-4xl font-black tracking-tight text-gray-900 dark:text-white"
+                            animate={{ scale: [1, 1.02, 1] }}
+                            transition={{ duration: 3, repeat: Infinity }}
+                        >
+                            ${currentPrice.toFixed(2)}
+                        </motion.p>
+                        <motion.div
+                            className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium mt-3 ${
+                                isPositive
+                                    ? 'bg-green-500/20 text-green-300 border border-green-500/30'
+                                    : 'bg-red-500/20 text-red-300 border border-red-500/30'
+                            }`}
+                            initial={{ y: 10, opacity: 0 }}
+                            animate={{ y: 0, opacity: 1 }}
+                            transition={{ delay: 0.6 }}
+                        >
+                            {isPositive ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                            {Math.abs(priceChange).toFixed(2)}%
+                        </motion.div>
+                      </motion.div>
 
-            <div className="flex gap-2">
-                <button
-                    onClick={() => { setDirection('UP'); setIsModalOpen(true); setShowConfirm(false); }}
-                    className="flex-1 py-4 rounded font-bold bg-[#2B2F36] text-gray-400 hover:bg-green-500 hover:text-white transition-colors"
-                >
-                    Buy Up
-                </button>
-                <button
-                    onClick={() => { setDirection('DOWN'); setIsModalOpen(true); setShowConfirm(false); }}
-                    className="flex-1 py-4 rounded font-bold bg-[#2B2F36] text-gray-400 hover:bg-red-500 hover:text-white transition-colors"
-                >
-                    Buy Down
-                </button>
-            </div>
+                      {/* Binary Options Buttons */}
+                      <motion.div
+                          className="grid grid-cols-2 gap-3"
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.6, duration: 0.4 }}
+                      >
+                        <motion.button
+                            onClick={() => { setDirection('UP'); setIsModalOpen(true); }}
+                            className={`relative overflow-hidden px-6 py-4 rounded-2xl font-bold text-white transition-all duration-300 ${
+                                direction === 'UP'
+                                    ? 'bg-gradient-to-r from-green-500 to-emerald-600 shadow-lg shadow-green-500/30'
+                                    : 'bg-gradient-to-r from-gray-200 to-gray-100 hover:from-green-500/20 hover:to-emerald-600/20 border border-gray-300 dark:from-white/10 dark:to-white/5 dark:border-white/20'
+                            }`}
+                            whileHover={{
+                                scale: 1.05,
+                                boxShadow: direction === 'UP'
+                                    ? '0 10px 30px rgba(34, 197, 94, 0.3)'
+                                    : '0 10px 30px rgba(255, 255, 255, 0.1)'
+                            }}
+                            whileTap={{ scale: 0.98 }}
+                        >
+                            <motion.div
+                                className="flex flex-col items-center gap-2"
+                                animate={direction === 'UP' ? { y: [0, -2, 0] } : {}}
+                                transition={{ duration: 1, repeat: direction === 'UP' ? Infinity : 0 }}
+                            >
+                                <ArrowUp className="w-6 h-6" />
+                                <span className="text-sm font-bold">Buy Up</span>
+                            </motion.div>
+                            {direction === 'UP' && (
+                                <motion.div
+                                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"
+                                    animate={{ x: ['-100%', '100%'] }}
+                                    transition={{ duration: 1.5, repeat: Infinity }}
+                                />
+                            )}
+                        </motion.button>
+
+                        <motion.button
+                            onClick={() => { setDirection('DOWN'); setIsModalOpen(true); }}
+                            className={`relative overflow-hidden px-6 py-4 rounded-2xl font-bold text-white transition-all duration-300 ${
+                                direction === 'DOWN'
+                                    ? 'bg-gradient-to-r from-red-500 to-rose-600 shadow-lg shadow-red-500/30'
+                                    : 'bg-gradient-to-r from-gray-200 to-gray-100 dark:from-white/10 dark:to-white/5 hover:from-red-500/20 hover:to-rose-600/20 border border-gray-300 dark:border-white/20'
+                            }`}
+                            whileHover={{
+                                scale: 1.05,
+                                boxShadow: direction === 'DOWN'
+                                    ? '0 10px 30px rgba(239, 68, 68, 0.3)'
+                                    : '0 10px 30px rgba(255, 255, 255, 0.1)'
+                            }}
+                            whileTap={{ scale: 0.98 }}
+                        >
+                            <motion.div
+                                className="flex flex-col items-center gap-2"
+                                animate={direction === 'DOWN' ? { y: [0, 2, 0] } : {}}
+                                transition={{ duration: 1, repeat: direction === 'DOWN' ? Infinity : 0 }}
+                            >
+                                <ArrowDown className="w-6 h-6" />
+                                <span className="text-sm font-bold">Buy Down</span>
+                            </motion.div>
+                            {direction === 'DOWN' && (
+                                <motion.div
+                                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent"
+                                    animate={{ x: ['-100%', '100%'] }}
+                                    transition={{ duration: 1.5, repeat: Infinity }}
+                                />
+                            )}
+                        </motion.button>
+                      </motion.div>
 
             <AnimatePresence>
                 {isModalOpen && (
@@ -582,7 +731,7 @@ const MarketPage: React.FC = () => {
                     >
                         <div className="flex justify-end">
                             <button
-                                onClick={() => { setIsModalOpen(false); setDirection(null); setOrderPeriod(null); setBinaryAmount(0); setShowConfirm(false); setBinaryStatus(null); }}
+                                onClick={() => { setIsModalOpen(false); setDirection(null); setOrderPeriod(null); setBinaryAmount(0); setBinaryStatus(null); }}
                                 className="p-1 text-gray-400 hover:text-white"
                             >
                                 <X size={20} />
@@ -672,30 +821,13 @@ const MarketPage: React.FC = () => {
 
                         <button
                             disabled={!canSubmitBinary || binarySubmitting}
-                            onClick={() => setShowConfirm(true)}
+                            onClick={() => submitOrderBinary(direction, orderPeriod || 30, binaryAmount)}
                             className={`w-full py-3 rounded font-bold ${
                                 direction === 'UP' ? 'bg-green-500' : 'bg-red-500'
                             } disabled:opacity-30`}
                         >
                             {binarySubmitting ? 'Processing...' : 'Submit Order'}
                         </button>
-
-                        <AnimatePresence>
-                            {showConfirm && (
-                                <motion.div
-                                    initial={{ opacity: 0, scale: 0.9 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    exit={{ opacity: 0, scale: 0.9 }}
-                                    className="p-3 bg-yellow-100 rounded dark:bg-yellow-800"
-                                >
-                                    <p className="text-sm">Confirm order: {direction} ${binaryAmount} USDT for {orderPeriod}s period? Expected profit: ${estimatedProfit.toFixed(2)}</p>
-                                    <div className="flex gap-2 mt-2">
-                                        <button onClick={async () => { await submitOrderBinary(); setShowConfirm(false); }} className="flex-1 py-2 text-sm font-bold bg-green-500 rounded">Confirm</button>
-                                        <button onClick={() => setShowConfirm(false)} className="flex-1 py-2 text-sm font-bold bg-gray-500 rounded">Cancel</button>
-                                    </div>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
 
                         <AnimatePresence>
                             {binaryStatus && (
@@ -713,14 +845,13 @@ const MarketPage: React.FC = () => {
                         </AnimatePresence>
                     </motion.div>
                 )}
-            </AnimatePresence>
+                </AnimatePresence>
+                    </motion.div>
+                   </div>
+                 </Card>
+             </div>
+         </div>
+         </div>
 
-                    </div>
-                  </div>
-                </Card>
-            </div>
-        </div>
-    );
-};
-
+            )}
 export default MarketPage;
