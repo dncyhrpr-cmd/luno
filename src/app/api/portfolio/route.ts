@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient, Asset } from '@prisma/client';
+import { Asset } from '@prisma/client';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
 import { resolveExpiredBinaryOrders } from '@/lib/trade-resolver';
 import NodeCache from 'node-cache';
+import { prisma } from '@/lib/db';
 
-const prisma = new PrismaClient();
 const portfolioCache = new NodeCache({ stdTTL: 300 }); // 5 minutes
 
 // GET - Fetch user's complete portfolio: balance and assets
