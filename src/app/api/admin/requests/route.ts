@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient, TransactionRequest } from '@prisma/client';
+import { TransactionRequest } from '@prisma/client';
 import { getRequestId, handleApiError, structuredLog } from '../../../../lib/correlation';
 import { extractTokenFromRequest, verifyAccessToken, AuthTokenPayload } from '../../../../lib/auth-utils';
-
-const prisma = new PrismaClient();
+import { prisma } from '../../../../lib/db';
 
 // Middleware to verify admin privileges
 async function verifyAdmin(request: NextRequest, reqId: string): Promise<AuthTokenPayload | null> {

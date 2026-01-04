@@ -1,7 +1,5 @@
-import { PrismaClient } from '@prisma/client';
 import { coinGeckoAPI } from './coingecko-api';
-
-const prisma = new PrismaClient();
+import { prisma } from './db';
 
 // Mapping for symbols not on Binance to CoinGecko ids
 const symbolToCoinGeckoId: Record<string, string> = {

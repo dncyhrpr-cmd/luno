@@ -1,10 +1,8 @@
 import * as jose from 'jose';
 import { randomUUID } from 'crypto'; // For generating JTI and general UUIDs
-import { PrismaClient } from '@prisma/client';
 import { structuredLog } from './correlation';
 import { NextRequest } from 'next/server';
-
-const prisma = new PrismaClient();
+import { prisma } from './db';
 
 // Get secrets from environment variables
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback_secret_must_be_strong');
