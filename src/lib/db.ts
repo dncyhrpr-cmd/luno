@@ -1,10 +1,18 @@
 import { PrismaClient } from '@prisma/client';
 
+// Try to import optimize extension
+let withOptimize: any = null;
+try {
+  withOptimize = require('@prisma/extension-optimize').withOptimize;
+} catch (e) {
+  console.warn('Prisma Optimize extension not available');
+}
+
 const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
+  prisma: any;
 };
 
-let prisma: PrismaClient;
+let prisma: any;
 
 // Only create real client if DATABASE_URL is available and we're not in a build environment
 const shouldCreateRealClient = process.env.DATABASE_URL &&
@@ -13,10 +21,20 @@ const shouldCreateRealClient = process.env.DATABASE_URL &&
 
 if (shouldCreateRealClient) {
   try {
-    prisma = globalForPrisma.prisma ?? new PrismaClient({
+    let client = globalForPrisma.prisma ?? new PrismaClient({
       log: process.env.NODE_ENV === 'production' ? ['error'] : [],
     });
-    if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+
+    // Extend with optimize if available and API key is provided
+    if (withOptimize && process.env.OPTIMIZE_API_KEY) {
+      client = client.$extends(
+        withOptimize({ apiKey: process.env.OPTIMIZE_API_KEY })
+      );
+      console.log('Prisma Optimize extension enabled');
+    }
+
+    prisma = client;
+    if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = client;
   } catch (error) {
     console.warn('Prisma client creation failed, using fallback');
     prisma = createFallbackClient();
