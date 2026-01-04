@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
 import { verifyAdmin } from '@/lib/auth-utils';
+import { Asset } from '@prisma/client';
 
 // GET - Fetch all assets with user info and lock status
 export async function GET(request: NextRequest) {
@@ -42,9 +43,9 @@ export async function GET(request: NextRequest) {
     });
 
     // For each asset, check if user has active binary trades for that underlying symbol
-    const assetsWithStatus = assets.map(asset => {
+    const assetsWithStatus = assets.map((asset: Asset & { user: { id: string, username: string } }) => {
       const underlyingSymbol = asset.symbol.startsWith('BINARY-') ? asset.symbol.replace('BINARY-', '') : asset.symbol;
-      const hasActiveTrades = binaryAssets.some(ba =>
+      const hasActiveTrades = binaryAssets.some((ba: { symbol: string, userId: string }) =>
         ba.userId === asset.userId &&
         (ba.symbol.includes(underlyingSymbol) || underlyingSymbol === asset.symbol)
       );

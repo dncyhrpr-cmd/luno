@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/db';
+import { Order } from '@prisma/client';
 
 export async function GET(request: NextRequest) {
   try {
@@ -45,7 +44,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Create temporary assets from active binary orders
-    const tempAssets = activeBinaryOrders.map(order => ({
+    const tempAssets = activeBinaryOrders.map((order: Order) => ({
       id: `temp-${order.id}`,
       userId: order.userId,
       symbol: `BINARY-${order.id}`,

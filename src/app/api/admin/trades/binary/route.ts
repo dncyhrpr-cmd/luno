@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
 import { verifyAdmin } from '@/lib/auth-utils';
+import { Order, Asset } from '@prisma/client';
 
 // GET - Fetch all binary trades
 export async function GET(request: NextRequest) {
@@ -55,9 +56,9 @@ export async function GET(request: NextRequest) {
     console.log('Found binary assets:', binaryAssets.length);
 
     // Combine data for active trades
-    const trades = activeOrders.map(order => {
+    const trades = activeOrders.map((order: Order & { user: { id: string, username: string } }) => {
       const isBinary = order.orderType === 'binary' || order.direction !== null;
-      const asset = isBinary ? binaryAssets.find(a => a.symbol === `BINARY-${order.id}`) : null;
+      const asset = isBinary ? binaryAssets.find((a: Asset & { user: { id: string, username: string } }) => a.symbol === `BINARY-${order.id}`) : null;
       const isResolved = order.status === 'win' || order.status === 'loss';
       const canResolve = isBinary && !isResolved && order.status === 'active' && asset !== null;
 

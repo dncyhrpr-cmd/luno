@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { TransactionRequest } from '@prisma/client';
+import { TransactionRequest, PrismaClient } from '@prisma/client';
 import { getRequestId, handleApiError, structuredLog } from '../../../../lib/correlation';
 import { extractTokenFromRequest, verifyAccessToken, AuthTokenPayload } from '../../../../lib/auth-utils';
 import { prisma } from '../../../../lib/db';
@@ -152,7 +152,7 @@ async function handleApprove(request: any, adminId: string, reqId: string) {
     const newBalance = user.balance + balanceChange;
 
     // Atomic transaction to update balance and request status
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: PrismaClient) => {
         // Update user balance
         await tx.user.update({
             where: { id: request.userId },

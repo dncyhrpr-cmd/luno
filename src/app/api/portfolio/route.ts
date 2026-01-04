@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Asset } from '@prisma/client';
+import { Asset, Order } from '@prisma/client';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
 import { resolveExpiredBinaryOrders } from '@/lib/trade-resolver';
 import NodeCache from 'node-cache';
@@ -52,8 +52,8 @@ export async function GET(request: NextRequest) {
     // Create temporary assets from active binary orders that haven't expired
     const now = new Date();
     const tempAssets = activeOrders
-      .filter(order => !order.resolvedAt || order.resolvedAt > now)
-      .map(order => ({
+      .filter((order: Order) => !order.resolvedAt || order.resolvedAt > now)
+      .map((order: Order) => ({
         id: `temp-${order.id}`,
         userId: order.userId,
         symbol: `BINARY-${order.id}`,

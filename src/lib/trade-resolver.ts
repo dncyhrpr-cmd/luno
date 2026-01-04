@@ -1,5 +1,6 @@
 import { coinGeckoAPI } from './coingecko-api';
 import { prisma } from './db';
+import { Order, PrismaClient } from '@prisma/client';
 
 // Mapping for symbols not on Binance to CoinGecko ids
 const symbolToCoinGeckoId: Record<string, string> = {
@@ -23,17 +24,17 @@ export async function resolveExpiredBinaryOrders() {
     if (expiredOrders.length === 0) return;
 
     // Group by userId for efficiency
-    const ordersByUser = expiredOrders.reduce((acc, order) => {
+    const ordersByUser = expiredOrders.reduce((acc: Record<string, Order[]>, order: Order) => {
       if (!acc[order.userId]) acc[order.userId] = [];
       acc[order.userId].push(order);
       return acc;
-    }, {} as Record<string, typeof expiredOrders>);
+    }, {});
 
     for (const userId of Object.keys(ordersByUser)) {
       const userOrders = ordersByUser[userId];
 
       // 2. Efficiently fetch unique prices
-      const symbols = [...new Set(userOrders.map((o) => o.symbol))];
+      const symbols = [...new Set(userOrders.map((o: Order) => o.symbol))] as string[];
       const priceMap = new Map<string, number>();
 
       await Promise.all(
@@ -41,7 +42,7 @@ export async function resolveExpiredBinaryOrders() {
           try {
             // Try Binance first
             const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
-            const data = await res.json();
+            const data = await res.json() as { price?: string };
             if (data.price) {
               priceMap.set(sym, parseFloat(data.price));
               return;
@@ -56,7 +57,7 @@ export async function resolveExpiredBinaryOrders() {
             try {
               const markets = await coinGeckoAPI.getCoinsMarkets([coinGeckoId], 'usd', 1);
               if (markets.length > 0 && markets[0].current_price) {
-                priceMap.set(sym, markets[0].current_price);
+                priceMap.set(sym, markets[0].current_price as number);
                 console.log(`Used CoinGecko price for ${sym}: ${markets[0].current_price}`);
               }
             } catch (e) {
@@ -99,7 +100,7 @@ export async function resolveExpiredBinaryOrders() {
         const status = isWin ? 'win' : 'loss';
 
         // 4. Atomic Transaction for Safety
-        await prisma.$transaction(async (tx) => {
+        await prisma.$transaction(async (tx: PrismaClient) => {
           // Update Order
           await tx.order.update({
             where: { id: order.id },
