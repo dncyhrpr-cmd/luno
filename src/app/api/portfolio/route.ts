@@ -1,149 +1,136 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Asset, Order } from '@prisma/client';
+import { collections } from '@/lib/db';
+import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-import { resolveExpiredBinaryOrders } from '@/lib/trade-resolver';
-import NodeCache from 'node-cache';
-import { prisma } from '@/lib/db';
-
-const portfolioCache = new NodeCache({ stdTTL: 300 }); // 5 minutes
+import admin from 'firebase-admin';
 
 // GET - Fetch user's complete portfolio: balance and assets
 export async function GET(request: NextRequest) {
+  const reqId = getRequestId(request);
+  const route = request.url;
+
   try {
     const token = extractTokenFromRequest(request);
     if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      structuredLog('WARN', reqId, 'Unauthorized: Missing token', { route, status: 401 });
+      return NextResponse.json({ error: 'Unauthorized', correlationId: reqId }, { status: 401 });
     }
 
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
+    structuredLog('INFO', reqId, 'Token verified, fetching portfolio', { route, userId });
 
-    // Resolve expired binary orders
-    await resolveExpiredBinaryOrders();
-
-    // Fetch active binary orders first to check if we should skip cache
-    const activeOrders = await prisma.order.findMany({
-      where: {
-        userId,
-        status: 'active',
-        orderType: 'binary'
-      }
-    });
-
-    // Check cache only if no active binary orders (to avoid stale data during trades)
-    const cacheKey = `portfolio_${userId}`;
-    if (activeOrders.length === 0) {
-      const cachedData = portfolioCache.get(cacheKey);
-      if (cachedData) {
-        return NextResponse.json(cachedData);
-      }
-    }
-
-    // Fetch from Prisma
-    const [user, assets] = await Promise.all([
-      prisma.user.findUnique({ where: { id: userId } }),
-      prisma.asset.findMany({ where: { userId } }),
+    // Atomically fetch user and assets
+    const [userDoc, assetsQuery] = await Promise.all([
+      collections.users.doc(userId).get(),
+      collections.assets.where('userId', '==', userId).get(),
     ]);
 
-    if (!user) {
-      return NextResponse.json({ error: 'User not found.' }, { status: 404 });
+    if (!userDoc.exists) {
+      structuredLog('ERROR', reqId, 'User not found for portfolio', { userId, status: 404 });
+      return NextResponse.json({ error: 'User not found.', correlationId: reqId }, { status: 404 });
     }
 
-    // Create temporary assets from active binary orders that haven't expired
-    const now = new Date();
-    const tempAssets = activeOrders
-      .filter((order: Order) => !order.resolvedAt || order.resolvedAt > now)
-      .map((order: Order) => ({
-        id: `temp-${order.id}`,
-        userId: order.userId,
-        symbol: `BINARY-${order.id}`,
-        quantity: 1,
-        averagePrice: order.amount || 0,
-        currentPrice: order.amount || 0,
-        createdAt: order.createdAt,
-      }));
+    const user = userDoc.data()!;
+    const assets = assetsQuery.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-    const allAssets = [...assets, ...tempAssets];
+    // In a real-world scenario, you might enrich asset data with real-time prices here
+    // For now, we use the stored average price.
 
-    const totalAssetValue = allAssets.reduce((sum: number, asset: any) => {
-      const price = asset.currentPrice || asset.averagePrice;
-      return sum + (asset.quantity * price);
-    }, 0);
+    const totalAssetValue = assets.reduce((sum: number, asset: any) => sum + (asset.quantity * asset.averagePrice), 0);
     const totalPortfolioValue = user.balance + totalAssetValue;
 
-    const unrealizedGainLoss = assets.reduce((sum: number, asset: Asset) => {
-      const currentPrice = asset.currentPrice || asset.averagePrice;
-      const assetCostBasis = asset.quantity * asset.averagePrice;
-      const assetCurrentValue = asset.quantity * currentPrice;
-      return sum + (assetCurrentValue - assetCostBasis);
-    }, 0);
+    structuredLog('INFO', reqId, 'Successfully fetched portfolio', { userId, status: 200, assetCount: assets.length });
 
-    const responseData = {
+    return NextResponse.json({
       balance: user.balance,
-      assets: allAssets,
+      assets,
       totalPortfolioValue,
-      totalAssetValue,
-      unrealizedGainLoss,
-      gainLossPercent: totalAssetValue > 0 ? (unrealizedGainLoss / (totalAssetValue - unrealizedGainLoss)) * 100 : 0,
-    };
-
-    // Cache the response
-    portfolioCache.set(cacheKey, responseData);
-
-    return NextResponse.json(responseData);
+      correlationId: reqId
+    });
 
   } catch (error: any) {
     if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
-      return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
+      structuredLog('WARN', reqId, 'Auth token error', { route, error: error.message, status: 401 });
+      return NextResponse.json({ error: 'Invalid or expired token', correlationId: reqId }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Portfolio fetch failed' }, { status: 500 });
+    return handleApiError(reqId, error, route, 'Portfolio fetch failed');
   }
 }
 
-// POST - Create transaction request for admin approval
+// POST - Deposit or withdraw funds from user's balance
 export async function POST(request: NextRequest) {
+  const reqId = getRequestId(request);
+  const route = request.url;
+
   try {
     const token = extractTokenFromRequest(request);
     if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      structuredLog('WARN', reqId, 'Unauthorized: Missing token for transaction', { route, status: 401 });
+      return NextResponse.json({ error: 'Unauthorized', correlationId: reqId }, { status: 401 });
     }
 
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
-    const { amount, type, bankName, holderName, accountNumber, ifscCode } = await request.json();
+    const { amount, type } = await request.json();
 
-    // Input Validation
+    structuredLog('INFO', reqId, 'Transaction request received', { route, userId, type, amount });
+
+    // --- Input Validation ---
     if (!['deposit', 'withdraw'].includes(type) || typeof amount !== 'number' || amount <= 0) {
-        return NextResponse.json({ error: 'Invalid type or amount. Amount must be positive.' }, { status: 400 });
+        structuredLog('WARN', reqId, 'Invalid transaction request', { userId, type, amount, status: 400 });
+        return NextResponse.json({ error: 'Invalid type or amount. Amount must be positive.', correlationId: reqId }, { status: 400 });
     }
 
-    // Create transaction request for admin approval
-    const requestData: any = {
-      userId,
-      type: type as 'deposit' | 'withdraw',
-      amount,
-    };
-
-    // Only include bank details if they are provided and not empty
-    if (type === 'withdraw') {
-      if (bankName && bankName.trim()) requestData.bankName = bankName.trim();
-      if (holderName && holderName.trim()) requestData.holderName = holderName.trim();
-      if (accountNumber && accountNumber.trim()) requestData.accountNumber = accountNumber.trim();
-      if (ifscCode && ifscCode.trim()) requestData.ifscCode = ifscCode.trim();
+    // --- User and Balance Check ---
+    const userDoc = await collections.users.doc(userId).get();
+    if (!userDoc.exists) {
+      structuredLog('ERROR', reqId, 'User not found for transaction', { userId, status: 404 });
+      return NextResponse.json({ error: 'User not found.', correlationId: reqId }, { status: 404 });
     }
 
-    const transactionRequest = await prisma.transactionRequest.create({
-      data: requestData
+    const user = userDoc.data()!;
+    let newBalance;
+    const balanceBefore = user.balance;
+
+    if (type === 'deposit') {
+      newBalance = balanceBefore + amount;
+    } else { // withdraw
+      if (balanceBefore < amount) {
+        structuredLog('WARN', reqId, 'Insufficient balance for withdrawal', { userId, balance: balanceBefore, amount, status: 400 });
+        return NextResponse.json({ error: 'Insufficient balance', correlationId: reqId }, { status: 400 });
+      }
+      newBalance = balanceBefore - amount;
+    }
+
+    // --- Database Operations ---
+    await collections.users.doc(userId).update({ balance: newBalance });
+
+    // Create a transaction history record
+    await collections.transactionHistory.add({
+        userId,
+        type: type as 'deposit' | 'withdraw',
+        amount,
+        description: `${type.charAt(0).toUpperCase() + type.slice(1)} of ${amount.toFixed(2)}`,
+        status: 'completed',
+        balanceBefore,
+        balanceAfter: newBalance,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    structuredLog('INFO', reqId, 'Transaction successful', { userId, type, amount, newBalance, status: 200 });
 
     return NextResponse.json({
-      message: `${type.charAt(0).toUpperCase() + type.slice(1)} request submitted for approval`,
-      requestId: transactionRequest.id,
+      message: `${type.charAt(0).toUpperCase() + type.slice(1)} successful`,
+      newBalance,
+      correlationId: reqId
     });
+
   } catch (error: any) {
-    if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
-      return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
+     if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
+      structuredLog('WARN', reqId, 'Auth token error on transaction', { route, error: error.message, status: 401 });
+      return NextResponse.json({ error: 'Invalid or expired token', correlationId: reqId }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Request submission failed' }, { status: 500 });
+    return handleApiError(reqId, error, route, 'Portfolio transaction failed');
   }
 }

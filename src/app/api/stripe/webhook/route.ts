@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
@@ -30,30 +31,31 @@ export async function POST(request: NextRequest) {
     }
 
     // Get current balance
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
+    const userDoc = await collections.users.doc(userId).get();
+    if (!userDoc.exists) {
       console.error('User not found');
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
-
+    const user = userDoc.data() as any;
     const balanceBefore = user.balance;
 
     // Update balance
-    await prisma.user.update({
-      where: { id: userId },
-      data: { balance: { increment: amount } },
+    await collections.users.doc(userId).update({
+      balance: balanceBefore + amount,
+      updatedAt: admin.firestore.Timestamp.now()
     });
 
     // Log transaction
-    await prisma.transactionHistory.create({
-      data: {
-        userId,
-        type: 'deposit',
-        amount,
-        description: `Stripe deposit - ${session.id}`,
-        balanceBefore,
-        balanceAfter: balanceBefore + amount,
-      },
+    const txId = collections.transactionHistory.doc().id;
+    await collections.transactionHistory.doc(txId).set({
+      id: txId,
+      userId,
+      type: 'deposit',
+      amount,
+      description: `Stripe deposit - ${session.id}`,
+      balanceBefore,
+      balanceAfter: balanceBefore + amount,
+      createdAt: admin.firestore.Timestamp.now()
     });
 
     console.log(`Deposit completed for user ${userId}: ${amount}`);
@@ -62,5 +64,5 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ received: true });
 }
 
-// Use Edge runtime for raw body handling
-export const runtime = 'edge';
+// Using default runtime for compatibility with Firebase Admin SDK
+// export const runtime = 'edge';

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
 import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
 import { verifyAdmin } from '@/lib/auth-utils';
 import NodeCache from 'node-cache';
+import admin from 'firebase-admin';
 
 const adminUsersCache = new NodeCache({ stdTTL: 300 }); // 5 minutes
 
@@ -35,33 +36,9 @@ export async function GET(request: NextRequest) {
 
         structuredLog('INFO', reqId, 'Fetching users', { adminId: adminPayload.userId, includeDetails, page, limit });
         
-        // Fetch users with assets, orders, and transaction history
-        const usersWithDetails = await prisma.user.findMany({
-          include: {
-            assets: true,
-            orders: {
-              where: {
-                status: {
-                  in: ['pending', 'executed']
-                }
-              }
-            },
-            transactionHistory: {
-              where: {
-                type: {
-                  in: ['deposit', 'withdraw']
-                }
-              },
-              select: {
-                type: true,
-                amount: true
-              }
-            }
-          },
-          orderBy: {
-            createdAt: 'desc'
-          }
-        });
+        // Fetch users from Firestore
+        const usersSnapshot = await collections.users.orderBy('createdAt', 'desc').get();
+        const usersWithDetails = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
         const total = usersWithDetails.length;
 

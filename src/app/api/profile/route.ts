@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 
 // GET - Fetch user profile
 export async function GET(request: NextRequest) {
@@ -13,17 +14,20 @@ export async function GET(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      include: { kycData: true }
-    });
+    const userDoc = await collections.users.doc(userId).get();
 
-    if (!user) {
+    if (!userDoc.exists) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
+    const user = userDoc.data()!;
+
+    // Get KYC data
+    const kycQuery = await collections.kycData.where('userId', '==', userId).limit(1).get();
+    const kycData = kycQuery.empty ? null : kycQuery.docs[0].data();
+
     const profile = {
-      id: user.id,
+      id: userDoc.id,
       username: user.username,
       email: user.email,
       balance: user.balance,
@@ -31,9 +35,9 @@ export async function GET(request: NextRequest) {
       status: user.status,
       lastLogin: user.lastLogin,
       createdAt: user.createdAt,
-      kycStatus: user.kycData?.status || 'unsubmitted',
-      kycSubmittedAt: user.kycData?.submittedAt,
-      kycVerifiedAt: user.kycData?.verifiedAt
+      kycStatus: kycData?.status || 'unsubmitted',
+      kycSubmittedAt: kycData?.submittedAt,
+      kycVerifiedAt: kycData?.verifiedAt
     };
 
     return NextResponse.json({ profile });
@@ -64,24 +68,22 @@ export async function PUT(request: NextRequest) {
     }
 
     // Check if username or email is already taken by another user
-    const existingUser = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { username },
-          { email }
-        ],
-        NOT: { id: userId }
-      }
-    });
+    const usernameQuery = await collections.users.where('username', '==', username).get();
+    const emailQuery = await collections.users.where('email', '==', email).get();
 
-    if (existingUser) {
+    const existingUsername = usernameQuery.docs.find(doc => doc.id !== userId);
+    const existingEmail = emailQuery.docs.find(doc => doc.id !== userId);
+
+    if (existingUsername || existingEmail) {
       return NextResponse.json({ error: 'Username or email already taken' }, { status: 409 });
     }
 
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: { username, email }
+    await collections.users.doc(userId).update({
+      username,
+      email
     });
+
+    const updatedUser = { id: userId, username, email };
 
     return NextResponse.json({
       message: 'Profile updated successfully',

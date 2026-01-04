@@ -1,44 +1,30 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 const ResetPasswordPage: React.FC = () => {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [token, setToken] = useState('');
+  const [email, setEmail] = useState('');
 
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash) {
-      const params = new URLSearchParams(hash.substring(1));
-      const accessToken = params.get('access_token');
-      const refreshToken = params.get('refresh_token');
-      const type = params.get('type');
+    const tokenParam = searchParams.get('token');
+    const emailParam = searchParams.get('email');
 
-      if (type === 'recovery' && accessToken && refreshToken) {
-        supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        }).then(() => {
-          setLoading(false);
-        }).catch(() => {
-          setError('Invalid or expired reset link.');
-          setLoading(false);
-        });
-      } else {
-        setError('Invalid reset link.');
-        setLoading(false);
-      }
+    if (tokenParam && emailParam) {
+      setToken(tokenParam);
+      setEmail(decodeURIComponent(emailParam));
     } else {
-      setError('No reset token found.');
-      setLoading(false);
+      setError('Invalid or missing reset link parameters.');
     }
-  }, []);
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,27 +40,46 @@ const ResetPasswordPage: React.FC = () => {
       return;
     }
 
-    // Additional password strength validation can be added here
+    if (!token || !email) {
+      setError('Invalid reset link.');
+      return;
+    }
 
     setLoading(true);
 
-    const { error } = await supabase.auth.updateUser({ password });
+    try {
+      const response = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token,
+          email,
+          password,
+        }),
+      });
 
-    if (error) {
+      const data = await response.json();
+
+      if (response.ok) {
+        setSuccess(true);
+        setTimeout(() => router.push('/login'), 2000);
+      } else {
+        setError(data.error || 'Failed to update password.');
+      }
+    } catch (error) {
       setError('Failed to update password.');
-    } else {
-      setSuccess(true);
-      setTimeout(() => router.push('/login'), 2000);
     }
 
     setLoading(false);
   };
 
-  if (loading) {
+  if (!token || !email) {
     return (
       <div className="luno-login-container">
         <h1 className="luno-logo">Luno</h1>
-        <div>Loading...</div>
+        <div className="form-error">Invalid or expired reset link.</div>
       </div>
     );
   }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Message } from '@prisma/client';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,34 +14,36 @@ export async function GET(request: NextRequest) {
     const userId = payload.userId;
 
     // Find or create chat for user
-    let chat = await prisma.chat.findFirst({
-      where: { userId },
-      include: {
-        messages: {
-          orderBy: { createdAt: 'asc' }
-        }
-      }
-    });
+    let chatQuery = await collections.chats.where('userId', '==', userId).limit(1).get();
+    let chat: any = null;
 
-    if (!chat) {
-      chat = await prisma.chat.create({
-        data: { userId },
-        include: {
-          messages: {
-            orderBy: { createdAt: 'asc' }
-          }
-        }
+    if (!chatQuery.empty) {
+      chat = { id: chatQuery.docs[0].id, ...chatQuery.docs[0].data() };
+    } else {
+      // Create new chat
+      const chatRef = await collections.chats.add({
+        userId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
       });
+      chat = { id: chatRef.id, userId };
     }
+
+    // Get messages for this chat
+    const messagesQuery = await collections.messages
+      .where('chatId', '==', chat.id)
+      .orderBy('createdAt', 'asc')
+      .get();
+
+    const messages = messagesQuery.docs.map(doc => ({
+      id: doc.id,
+      sender: doc.data().sender,
+      text: doc.data().text,
+      timestamp: doc.data().createdAt
+    }));
 
     return NextResponse.json({
       chatId: chat.id,
-      messages: chat.messages.map((msg: Message) => ({
-        id: msg.id,
-        sender: msg.sender,
-        text: msg.text,
-        timestamp: msg.createdAt
-      }))
+      messages
     });
   } catch (error) {
     console.error('Error fetching messages:', error);
@@ -69,25 +71,32 @@ export async function POST(request: NextRequest) {
     }
 
     // Find or create chat
-    let chat = await prisma.chat.findFirst({ where: { userId } });
-    if (!chat) {
-      chat = await prisma.chat.create({ data: { userId } });
+    let chatQuery = await collections.chats.where('userId', '==', userId).limit(1).get();
+    let chatId: string;
+
+    if (!chatQuery.empty) {
+      chatId = chatQuery.docs[0].id;
+    } else {
+      const chatRef = await collections.chats.add({
+        userId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      chatId = chatRef.id;
     }
 
     // Create message
-    const message = await prisma.message.create({
-      data: {
-        chatId: chat.id,
-        sender: 'user',
-        text: text.trim()
-      }
+    const messageRef = await collections.messages.add({
+      chatId,
+      sender: 'user',
+      text: text.trim(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
     return NextResponse.json({
-      id: message.id,
-      sender: message.sender,
-      text: message.text,
-      timestamp: message.createdAt
+      id: messageRef.id,
+      sender: 'user',
+      text: text.trim(),
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
     });
   } catch (error) {
     console.error('Error sending message:', error);

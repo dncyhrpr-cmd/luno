@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { validatePassword } from '@/lib/auth-utils';
 import bcryptjs from 'bcryptjs';
 import { supabase } from '@/lib/supabase';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,13 +31,14 @@ export async function POST(request: NextRequest) {
     let userCount;
     try {
       // Check if user already exists
-      const existingUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
-      if (existingUser) {
+      const existingUserSnapshot = await collections.users.where('email', '==', normalizedEmail).get();
+      if (!existingUserSnapshot.empty) {
         return NextResponse.json({ error: 'User with this email already exists' }, { status: 409 });
       }
 
       // Make first user admin
-      userCount = await prisma.user.count();
+      const allUsersSnapshot = await collections.users.get();
+      userCount = allUsersSnapshot.size;
     } catch (dbError: any) {
       console.error('Database connection error:', dbError.message);
       return NextResponse.json({ error: 'Database connection failed' }, { status: 500 });
@@ -52,34 +54,30 @@ export async function POST(request: NextRequest) {
     // Hash password
     const passwordHash = await bcryptjs.hash(password, 10);
 
-    // Create user in Prisma
-    const newUser = await prisma.user.create({
-      data: {
-        username,
-        email: normalizedEmail,
-        password: passwordHash,
-        role: userRole,
-        roles: JSON.stringify(userRoles),
-        balance: 0,
-        twoFactorEnabled: false,
-        migrationStatus: 'migrated',
-      }
-    });
+    // Create user in Firestore
+    const userId = collections.users.doc().id;
+    const userData = {
+      id: userId,
+      username,
+      email: normalizedEmail,
+      password: passwordHash,
+      role: userRole,
+      roles: JSON.stringify(userRoles),
+      balance: 0,
+      twoFactorEnabled: false,
+      migrationStatus: 'migrated',
+      createdAt: admin.firestore.Timestamp.now(),
+      updatedAt: admin.firestore.Timestamp.now()
+    };
+    await collections.users.doc(userId).set(userData);
+    const newUser = { ...userData };
 
     if (!newUser) {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
     }
 
-    // Also create user in Supabase Auth for password reset
-    const { error: supabaseError } = await supabase.auth.signUp({
-      email: normalizedEmail,
-      password,
-    });
-
-    if (supabaseError) {
-      console.error('Supabase signUp error:', supabaseError);
-      // Don't fail the signup, just log the error
-    }
+    // User created successfully in Firestore
+    // Password reset functionality is handled through custom Firestore implementation
 
     return NextResponse.json(
       {

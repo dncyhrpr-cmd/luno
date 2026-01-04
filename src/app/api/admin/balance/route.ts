@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+ import admin from 'firebase-admin';
 import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
 import { verifyAdmin } from '@/lib/auth-utils';
 
@@ -24,10 +25,11 @@ export async function POST(request: NextRequest) {
         structuredLog('INFO', reqId, 'Admin balance update requested', { adminId: adminPayload.userId, targetUserId: userId, amount, reason });
 
         // Get current user balance
-        const user = await prisma.user.findUnique({ where: { id: userId } });
-        if (!user) {
+        const userDoc = await collections.users.doc(userId).get();
+        if (!userDoc.exists) {
             return NextResponse.json({ error: 'User not found', correlationId: reqId }, { status: 404 });
         }
+        const user = { id: userDoc.id, ...userDoc.data() } as any;
 
         const newBalance = user.balance + amount;
         if (newBalance < 0) {
@@ -35,37 +37,39 @@ export async function POST(request: NextRequest) {
         }
 
         // Update balance
-        await prisma.user.update({ where: { id: userId }, data: { balance: newBalance } });
+        await collections.users.doc(userId).update({ balance: newBalance });
 
         // Create transaction history
-        await prisma.transactionHistory.create({
-            data: {
-                userId,
-                type: amount > 0 ? 'deposit' : 'withdrawal',
-                amount: Math.abs(amount),
-                description: `Admin ${amount > 0 ? 'credit' : 'debit'}: ${reason || 'Manual adjustment'}`,
-                status: 'completed',
-                balanceBefore: user.balance,
-                balanceAfter: newBalance,
-            }
+        const txId = collections.transactionHistory.doc().id;
+        await collections.transactionHistory.doc(txId).set({
+            id: txId,
+            userId,
+            type: amount > 0 ? 'deposit' : 'withdrawal',
+            amount: Math.abs(amount),
+            description: `Admin ${amount > 0 ? 'credit' : 'debit'}: ${reason || 'Manual adjustment'}`,
+            status: 'completed',
+            balanceBefore: user.balance,
+            balanceAfter: newBalance,
+            createdAt: admin.firestore.Timestamp.now()
         });
 
         // Create audit log
-        await prisma.auditLog.create({
-            data: {
-                userId,
-                adminId: adminPayload.userId,
-                action: 'balance_update',
-                resourceType: 'user_balance',
-                resourceId: userId,
-                changes: JSON.stringify({
-                    amount,
-                    reason: reason || 'Manual adjustment',
-                    balanceBefore: user.balance,
-                    balanceAfter: newBalance
-                }),
-                status: 'success'
-            }
+        const auditId = collections.auditLogs.doc().id;
+        await collections.auditLogs.doc(auditId).set({
+            id: auditId,
+            userId,
+            adminId: adminPayload.userId,
+            action: 'balance_update',
+            resourceType: 'user_balance',
+            resourceId: userId,
+            changes: JSON.stringify({
+                amount,
+                reason: reason || 'Manual adjustment',
+                balanceBefore: user.balance,
+                balanceAfter: newBalance
+            }),
+            status: 'success',
+            createdAt: admin.firestore.Timestamp.now()
         });
 
         structuredLog('INFO', reqId, 'Admin balance update completed', { adminId: adminPayload.userId, targetUserId: userId, amount, newBalance });

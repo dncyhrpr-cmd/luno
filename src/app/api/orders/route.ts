@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { collections } from '@/lib/db';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-import { prisma } from '@/lib/db';
+import admin from 'firebase-admin';
 
-// GET - Fetch user's orders
+
+
 export async function GET(request: NextRequest) {
   try {
     const token = extractTokenFromRequest(request);
@@ -13,22 +15,29 @@ export async function GET(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    const orders = await prisma.order.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' }
-    });
+    const ordersQuery = await collections.scheduledOrders
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .get();
 
-    return NextResponse.json({ orders });
+    const orders = ordersQuery.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    return NextResponse.json({
+      orders,
+      total: orders.length
+    });
   } catch (error: any) {
     if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
     }
-    console.error('Failed to fetch orders:', error);
-    return NextResponse.json({ error: 'Failed to fetch orders' }, { status: 500 });
+    console.error('Failed to fetch scheduled orders:', error);
+    return NextResponse.json({ error: 'Failed to fetch scheduled orders' }, { status: 500 });
   }
 }
 
-// POST - Create new order
 export async function POST(request: NextRequest) {
   try {
     const token = extractTokenFromRequest(request);
@@ -39,113 +48,95 @@ export async function POST(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    const { type, symbol, quantity, price, orderType, leverage, direction, period, profitPercent, binaryAmount } = await request.json();
+    const { symbol, type, quantity, price, orderType, scheduledTime, triggerCondition } = await request.json();
 
-    if (!type || !symbol) {
-      return NextResponse.json({ error: 'Type and symbol are required' }, { status: 400 });
+    if (!symbol || !type || !quantity || !scheduledTime) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // Basic validation
     if (!['buy', 'sell'].includes(type)) {
+      return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
+    }
+
+    if (!['limit', 'market'].includes(orderType || 'market')) {
       return NextResponse.json({ error: 'Invalid order type' }, { status: 400 });
     }
 
-    if (orderType === 'binary') {
-      if (!binaryAmount || binaryAmount <= 0) {
-        return NextResponse.json({ error: 'Binary amount must be positive' }, { status: 400 });
-      }
-      if (!direction || !['UP', 'DOWN'].includes(direction)) {
-        return NextResponse.json({ error: 'Direction must be UP or DOWN for binary orders' }, { status: 400 });
-      }
-      if (!period || period <= 0) {
-        return NextResponse.json({ error: 'Period must be positive for binary orders' }, { status: 400 });
-      }
-    } else {
-      if (!quantity || quantity <= 0) {
-        return NextResponse.json({ error: 'Quantity must be positive' }, { status: 400 });
-      }
+    if (orderType === 'limit' && !price) {
+      return NextResponse.json({ error: 'Price required for limit orders' }, { status: 400 });
     }
 
-    // Fetch user balance
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
+    const scheduledDate = new Date(scheduledTime);
+    if (scheduledDate < new Date()) {
+      return NextResponse.json({ error: 'Scheduled time must be in the future' }, { status: 400 });
+    }
+
+    const userDoc = await collections.users.doc(userId).get();
+    if (!userDoc.exists) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    const stakeAmount = orderType === 'binary' ? binaryAmount : quantity;
-    if (user.balance < stakeAmount) {
-      return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
-    }
-
-    const createdAt = new Date();
-    const resolvedAt = orderType === 'binary' && period ? new Date(createdAt.getTime() + period * 1000) : null;
-
-    // Deduct balance for binary orders
-    if (orderType === 'binary') {
-      await prisma.user.update({
-        where: { id: userId },
-        data: { balance: user.balance - binaryAmount }
-      });
-
-      // Log transaction
-      await prisma.transactionHistory.create({
-        data: {
-          userId,
-          type: 'buy', // or 'binary_stake'
-          amount: -binaryAmount,
-          symbol: symbol.toUpperCase(),
-          quantity: 1,
-          price: binaryAmount,
-          description: `Binary trade stake deduction for ${symbol.toUpperCase()}`,
-          status: 'completed',
-          balanceBefore: user.balance,
-          balanceAfter: user.balance - binaryAmount
-        }
-      });
-    }
-
-    const order = await prisma.order.create({
-      data: {
-        userId,
-        type,
-        symbol: symbol.toUpperCase(),
-        quantity: quantity || binaryAmount,
-        price: price || null,
-        orderType: orderType || 'market',
-        leverage: leverage || null,
-        status: orderType === 'binary' ? 'active' : 'pending',
-        direction: direction || null,
-        entryPrice: price || null,
-        amount: binaryAmount || quantity,
-        profitPercent: profitPercent || null,
-        resolvedAt
-      }
+    const scheduledOrderRef = await collections.scheduledOrders.add({
+      userId,
+      symbol: symbol.toUpperCase(),
+      type,
+      quantity,
+      price,
+      orderType: orderType || 'market',
+      scheduledTime: admin.firestore.Timestamp.fromDate(scheduledDate),
+      triggerCondition,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    // Create virtual asset for binary orders
-    if (orderType === 'binary') {
-      await prisma.asset.create({
-        data: {
-          userId,
-          symbol: `BINARY-${order.id}`,
-          quantity: 1,
-          averagePrice: binaryAmount,
-          currentPrice: binaryAmount
-        }
-      });
-    }
+    const scheduledOrder = {
+      id: scheduledOrderRef.id,
+      userId,
+      symbol: symbol.toUpperCase(),
+      type,
+      quantity,
+      price,
+      orderType: orderType || 'market',
+      scheduledTime: admin.firestore.Timestamp.fromDate(scheduledDate),
+      triggerCondition,
+      status: 'pending'
+    };
 
-    return NextResponse.json({ order, message: 'Order created successfully' });
+    await collections.auditLogs.add({
+      userId,
+      action: 'scheduled_order_created',
+      resourceType: 'scheduled_order',
+      resourceId: scheduledOrder.id,
+      changes: {
+        symbol: symbol.toUpperCase(),
+        type,
+        quantity,
+        scheduledTime: scheduledDate.toISOString()
+      },
+      status: 'success',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    await collections.alerts.add({
+      userId,
+      type: 'order',
+      title: 'Scheduled Order Created',
+      message: `Your ${type} order for ${quantity} ${symbol.toUpperCase()} is scheduled for ${scheduledDate.toLocaleString()}.`,
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return NextResponse.json({
+      order: scheduledOrder,
+      message: 'Scheduled order created successfully',
+      success: true
+    });
   } catch (error: any) {
-    if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
-      return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
-    }
-    console.error('Failed to create order:', error);
-    return NextResponse.json({ error: 'Failed to create order' }, { status: 500 });
+
+    return NextResponse.json({ error: 'Failed to create scheduled order' }, { status: 500 });
   }
 }
 
-// PUT - Cancel order
 export async function PUT(request: NextRequest) {
   try {
     const token = extractTokenFromRequest(request);
@@ -156,35 +147,64 @@ export async function PUT(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    const { orderId } = await request.json();
+    const { orderId, action } = await request.json();
 
-    if (!orderId) {
-      return NextResponse.json({ error: 'Order ID is required' }, { status: 400 });
+    if (!orderId || !action) {
+      return NextResponse.json({ error: 'Missing orderId or action' }, { status: 400 });
     }
 
-    const order = await prisma.order.findFirst({
-      where: { id: orderId, userId }
-    });
-
-    if (!order) {
-      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    if (!['cancel'].includes(action)) {
+      return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
 
-    if (order.status !== 'pending') {
-      return NextResponse.json({ error: 'Only pending orders can be cancelled' }, { status: 400 });
+    if (action === 'cancel') {
+      const orderDoc = await collections.scheduledOrders.doc(orderId).get();
+
+      if (!orderDoc.exists || orderDoc.data()?.userId !== userId) {
+        return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+      }
+
+      const orderData = orderDoc.data()!;
+
+      if (orderData.status !== 'pending') {
+        return NextResponse.json({ error: 'Only pending orders can be cancelled' }, { status: 400 });
+      }
+
+      await collections.scheduledOrders.doc(orderId).update({
+        status: 'cancelled'
+      });
+
+      await collections.auditLogs.add({
+        userId,
+        action: 'scheduled_order_cancelled',
+        resourceType: 'scheduled_order',
+        resourceId: orderId,
+        changes: { status: 'cancelled' },
+        status: 'success',
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      await collections.alerts.add({
+        userId,
+        type: 'order',
+        title: 'Scheduled Order Cancelled',
+        message: `Your scheduled order ${orderId} has been cancelled.`,
+        read: false,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      return NextResponse.json({
+        message: 'Scheduled order cancelled successfully',
+        success: true
+      });
     }
 
-    const updatedOrder = await prisma.order.update({
-      where: { id: orderId },
-      data: { status: 'cancelled' }
-    });
-
-    return NextResponse.json({ order: updatedOrder, message: 'Order cancelled successfully' });
+    return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (error: any) {
     if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 });
     }
-    console.error('Failed to cancel order:', error);
-    return NextResponse.json({ error: 'Failed to cancel order' }, { status: 500 });
+    console.error('Failed to update scheduled order:', error);
+    return NextResponse.json({ error: 'Failed to update scheduled order' }, { status: 500 });
   }
 }

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
 import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
 import { verifyAdmin } from '@/lib/auth-utils';
-import { Asset } from '@prisma/client';
+import admin from 'firebase-admin';
 
 // GET - Fetch all assets with user info and lock status
 export async function GET(request: NextRequest) {
@@ -18,32 +18,27 @@ export async function GET(request: NextRequest) {
     structuredLog('INFO', reqId, 'Fetching all assets', { adminId: adminPayload.userId });
 
     // Get all assets with user info
-    const assets = await prisma.asset.findMany({
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true
-          }
-        }
-      }
-    });
+    const assetsSnapshot = await collections.assets.get();
+    const assets = await Promise.all(assetsSnapshot.docs.map(async (doc) => {
+      const asset = { id: doc.id, ...doc.data() };
+      const userDoc = await collections.users.doc((asset as any).userId).get();
+      const user = userDoc.exists ? userDoc.data() : null;
+      return { ...asset, user: user ? { id: user.id, username: user.username } : null };
+    }));
 
     // Check for active trades per asset (simplified: if binary asset exists with same symbol)
-    const binaryAssets = await prisma.asset.findMany({
-      where: {
-        symbol: {
-          startsWith: 'BINARY-'
-        }
-      },
-      select: {
-        symbol: true,
-        userId: true
-      }
-    });
+    const binaryAssetsSnapshot = await collections.assets
+      .where('symbol', '>=', 'BINARY-')
+      .where('symbol', '<', 'BINARY-~')
+      .get();
+
+    const binaryAssets = binaryAssetsSnapshot.docs.map(doc => ({
+      symbol: doc.data().symbol,
+      userId: doc.data().userId
+    }));
 
     // For each asset, check if user has active binary trades for that underlying symbol
-    const assetsWithStatus = assets.map((asset: Asset & { user: { id: string, username: string } }) => {
+    const assetsWithStatus = assets.map((asset: any) => {
       const underlyingSymbol = asset.symbol.startsWith('BINARY-') ? asset.symbol.replace('BINARY-', '') : asset.symbol;
       const hasActiveTrades = binaryAssets.some((ba: { symbol: string, userId: string }) =>
         ba.userId === asset.userId &&

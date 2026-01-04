@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 
 // GET /api/admin/support - get all chats
 export async function GET(request: NextRequest) {
@@ -14,21 +15,34 @@ export async function GET(request: NextRequest) {
     // Check if admin - assuming roles include 'admin'
     // For now, assume any authenticated user can access, but in production check roles
 
-    const chats = await prisma.chat.findMany({
-      include: {
-        user: {
-          select: { id: true, username: true, email: true }
-        },
-        messages: {
-          orderBy: { createdAt: 'desc' },
-          take: 1 // Get latest message
-        },
-        _count: {
-          select: { messages: true }
-        }
-      },
-      orderBy: { updatedAt: 'desc' }
-    });
+    const chatsSnapshot = await collections.chats.orderBy('updatedAt', 'desc').get();
+    const chats = await Promise.all(chatsSnapshot.docs.map(async (chatDoc) => {
+      const chat = { id: chatDoc.id, ...chatDoc.data() } as any;
+
+      // Get user info
+      const userDoc = await collections.users.doc(chat.userId).get();
+      const user = userDoc.exists ? userDoc.data() : null;
+
+      // Get latest message
+      const messagesSnapshot = await collections.messages
+        .where('chatId', '==', chat.id)
+        .orderBy('createdAt', 'desc')
+        .limit(1)
+        .get();
+
+      const latestMessage = messagesSnapshot.docs.length > 0 ?
+        { id: messagesSnapshot.docs[0].id, ...messagesSnapshot.docs[0].data() } : null;
+
+      // Get message count
+      const messagesCountSnapshot = await collections.messages.where('chatId', '==', chat.id).get();
+
+      return {
+        ...chat,
+        user: user ? { id: user.id, username: user.username, email: user.email } : null,
+        messages: latestMessage ? [latestMessage] : [],
+        _count: { messages: messagesCountSnapshot.size }
+      };
+    }));
 
     return NextResponse.json(chats);
   } catch (error) {
@@ -57,26 +71,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify chat exists
-    const chat = await prisma.chat.findUnique({ where: { id: chatId } });
-    if (!chat) {
+    const chatDoc = await collections.chats.doc(chatId).get();
+    if (!chatDoc.exists) {
       return NextResponse.json({ error: 'Chat not found' }, { status: 404 });
     }
 
-    const message = await prisma.message.create({
-      data: {
-        chatId,
-        sender: 'support',
-        text: text.trim()
-      }
-    });
+    const messageId = collections.messages.doc().id;
+    const messageData = {
+      id: messageId,
+      chatId,
+      sender: 'support',
+      text: text.trim(),
+      createdAt: admin.firestore.Timestamp.now()
+    };
+
+    await collections.messages.doc(messageId).set(messageData);
 
     // Update chat updatedAt
-    await prisma.chat.update({
-      where: { id: chatId },
-      data: { updatedAt: new Date() }
+    await collections.chats.doc(chatId).update({
+      updatedAt: admin.firestore.Timestamp.now()
     });
 
-    return NextResponse.json(message);
+    return NextResponse.json(messageData);
   } catch (error) {
     console.error('Error sending message:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

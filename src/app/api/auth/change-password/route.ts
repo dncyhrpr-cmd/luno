@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { extractTokenFromRequest, verifyAccessToken, validatePassword } from '@/lib/auth-utils';
 import bcryptjs from 'bcryptjs';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 
 export async function POST(request: Request) {
   const token = extractTokenFromRequest(request as any);
@@ -20,10 +21,11 @@ export async function POST(request: Request) {
     }
 
     // Find the user
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
+    const userDoc = await collections.users.doc(userId).get();
+    if (!userDoc.exists) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
+    const user = userDoc.data() as any;
 
     // Verify current password
     const passwordHash = user.password;
@@ -46,9 +48,9 @@ export async function POST(request: Request) {
     const newPasswordHash = await bcryptjs.hash(newPassword, 10);
 
     // Update user with new password hash
-    await prisma.user.update({
-      where: { id: userId },
-      data: { password: newPasswordHash }
+    await collections.users.doc(userId).update({
+      password: newPasswordHash,
+      updatedAt: admin.firestore.Timestamp.now()
     });
 
     return NextResponse.json({ message: 'Password changed successfully' });

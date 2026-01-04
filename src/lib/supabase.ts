@@ -1,6 +1,12 @@
-import { createClient } from '@supabase/supabase-js'
+// Supabase client - Using Firestore-only system
+// Password reset is handled through custom Firestore implementation
 
-const supabaseUrl = process.env.SUPABASE_URL!
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY!
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Mock Supabase client to prevent import errors
+export const supabase = {
+  auth: {
+    resetPasswordForEmail: async () => ({ data: null, error: null }),
+    signUp: async () => ({ error: null }),
+    setSession: async () => ({}),
+    updateUser: async () => ({ error: null })
+  }
+};

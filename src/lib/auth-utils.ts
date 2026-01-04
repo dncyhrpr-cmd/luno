@@ -2,7 +2,8 @@ import * as jose from 'jose';
 import { randomUUID } from 'crypto'; // For generating JTI and general UUIDs
 import { structuredLog } from './correlation';
 import { NextRequest } from 'next/server';
-import { prisma } from './db';
+import { collections } from './db';
+import admin from 'firebase-admin';
 
 // Get secrets from environment variables
 const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback_secret_must_be_strong');
@@ -119,14 +120,13 @@ export async function verifyAccessToken(token: string): Promise<AuthTokenPayload
   const payload = await verifyToken(token, JWT_SECRET);
 
   if (payload.jti) {
-    const revocation = await prisma.tokenRevocation.findFirst({
-      where: {
-        userId: payload.userId,
-        expiresAt: { gte: new Date() }
-      }
-    });
+    const revocationSnapshot = await collections.tokenRevocation
+      .where('userId', '==', payload.userId)
+      .where('expiresAt', '>', admin.firestore.Timestamp.now())
+      .limit(1)
+      .get();
 
-    if (revocation) {
+    if (!revocationSnapshot.empty) {
       throw new Error('Token has been revoked');
     }
   }

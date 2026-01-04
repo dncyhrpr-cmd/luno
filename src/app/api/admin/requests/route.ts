@@ -1,243 +1,210 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { TransactionRequest, PrismaClient } from '@prisma/client';
-import { getRequestId, handleApiError, structuredLog } from '../../../../lib/correlation';
-import { extractTokenFromRequest, verifyAccessToken, AuthTokenPayload } from '../../../../lib/auth-utils';
-import { prisma } from '../../../../lib/db';
+import { collections } from '@/lib/db';
+import jwt from 'jsonwebtoken';
+import admin from 'firebase-admin';
 
-// Middleware to verify admin privileges
-async function verifyAdmin(request: NextRequest, reqId: string): Promise<AuthTokenPayload | null> {
-    const token = extractTokenFromRequest(request);
-    if (!token) {
-        structuredLog('WARN', reqId, 'Unauthorized: Missing token for admin transaction requests', { status: 401 });
-        return null;
-    }
+function verifyAdminToken(request: NextRequest) {
+  const authHeader = request.headers.get('authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
 
-    try {
-        const payload = await verifyAccessToken(token);
-        if (!payload.roles?.includes('admin')) {
-            structuredLog('WARN', reqId, 'Forbidden: User is not an admin', { userId: payload.userId, status: 403 });
-            return null;
-        }
-        return payload;
-    } catch (error: any) {
-        structuredLog('WARN', reqId, 'Auth token error on admin transaction requests', { error: error.message, status: 401 });
-        return null;
-    }
+  const token = authHeader.substring(7);
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as any;
+    if (decoded.role !== 'admin') return null;
+    return decoded;
+  } catch (error: any) {
+    return null;
+  }
 }
 
 // GET - Fetch all pending transaction requests (admin only)
 export async function GET(request: NextRequest) {
-    const reqId = getRequestId(request);
-    const route = request.url;
-
-    const adminPayload = await verifyAdmin(request, reqId);
-    if (!adminPayload) {
-        return NextResponse.json({ error: 'Unauthorized or Forbidden', correlationId: reqId }, { status: 403 });
+  try {
+    const adminUser = verifyAdminToken(request);
+    if (!adminUser) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    try {
-        structuredLog('INFO', reqId, 'Fetching transaction requests', { adminId: adminPayload.userId });
+    const requestsSnapshot = await collections.requests.where('status', '==', 'pending').get();
+    const pendingRequests = requestsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-        const pendingRequests = await prisma.transactionRequest.findMany({
-            where: { status: 'pending' },
-            include: { user: true }
-        });
+    const requestsWithUserDetails = await Promise.all(
+      pendingRequests.map(async (req: any) => {
+        const userDoc = await collections.users.doc(req.userId).get();
+        const userData = userDoc.exists ? userDoc.data() : null;
+        return {
+          ...req,
+          username: userData?.username,
+          email: userData?.email
+        };
+      })
+    );
 
-        const requestsWithUserDetails = pendingRequests.map((req: TransactionRequest & { user: { username: string | null; email: string | null } | null }) => ({
-            ...req,
-            username: req.user?.username,
-            email: req.user?.email
-        }));
-
-        structuredLog('INFO', reqId, 'Successfully fetched transaction requests', { count: requestsWithUserDetails.length });
-        return NextResponse.json({
-            requests: requestsWithUserDetails,
-            total: requestsWithUserDetails.length,
-            correlationId: reqId
-        });
-
-    } catch (error: any) {
-        if (error.message?.includes('Firebase Firestore not initialized')) {
-          return NextResponse.json({ requests: [], total: 0, correlationId: reqId });
-        }
-        return handleApiError(reqId, error, route, 'Failed to fetch transaction requests');
-    }
+    return NextResponse.json({ 
+      requests: requestsWithUserDetails,
+      total: requestsWithUserDetails.length
+    });
+  } catch (error: any) {
+    return NextResponse.json({ error: 'Failed to fetch requests' }, { status: 500 });
+  }
 }
 
 // PUT - Approve or reject a transaction request (admin only)
 export async function PUT(request: NextRequest) {
-    const reqId = getRequestId(request);
-    const route = request.url;
-
-    const adminPayload = await verifyAdmin(request, reqId);
-    if (!adminPayload) {
-        return NextResponse.json({ error: 'Unauthorized or Forbidden', correlationId: reqId }, { status: 403 });
+  try {
+    const adminUser = verifyAdminToken(request);
+    if (!adminUser) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    try {
-        const { requestId, action, reason } = await request.json();
+    const { requestId, action, reason } = await request.json();
 
-        if (!requestId || !action || !['approve', 'reject'].includes(action)) {
-            structuredLog('WARN', reqId, 'Invalid action or missing requestId', { status: 400 });
-            return NextResponse.json({ error: 'Invalid action or missing requestId', correlationId: reqId }, { status: 400 });
-        }
-
-        structuredLog('INFO', reqId, 'Processing transaction request', { adminId: adminPayload.userId, requestId, action });
-
-        const transactionRequest = await prisma.transactionRequest.findUnique({ where: { id: requestId } });
-
-        if (!transactionRequest) {
-            structuredLog('WARN', reqId, 'Request not found or already processed', { requestId, status: 404 });
-            return NextResponse.json({ error: 'Request not found or already processed', correlationId: reqId }, { status: 404 });
-        }
-
-        if (transactionRequest.status !== 'pending') {
-            structuredLog('WARN', reqId, 'Request already processed', { requestId, currentStatus: transactionRequest.status, status: 409 });
-            return NextResponse.json({ error: `Request already ${transactionRequest.status}`, correlationId: reqId }, { status: 409 });
-        }
-
-        if (action === 'approve') {
-            try {
-                await handleApprove(transactionRequest, adminPayload.userId, reqId);
-            } catch (error: any) {
-                // Handle business logic errors with appropriate status codes
-                if (error.message === 'Insufficient balance') {
-                    structuredLog('WARN', reqId, 'Insufficient balance for withdrawal approval', {
-                        requestId,
-                        userId: transactionRequest.userId,
-                        amount: transactionRequest.amount
-                    });
-                    return NextResponse.json({
-                        error: 'Cannot approve withdrawal: User has insufficient balance',
-                        correlationId: reqId
-                    }, { status: 400 });
-                }
-                // Re-throw other errors to be handled by the general catch block
-                throw error;
-            }
-        } else { // action === 'reject'
-            if (!reason) {
-                structuredLog('WARN', reqId, 'Reason required for rejection', { status: 400 });
-                return NextResponse.json({ error: 'Reason required for rejection', correlationId: reqId }, { status: 400 });
-            }
-            await handleReject(transactionRequest, reason, adminPayload.userId, reqId);
-        }
-
-        structuredLog('INFO', reqId, 'Successfully processed transaction request', { requestId, action });
-        return NextResponse.json({
-            message: `Request ${action}d successfully`,
-            success: true,
-            correlationId: reqId
-        });
-
-    } catch (error: any) {
-        return handleApiError(reqId, error, route, 'Failed to process transaction request');
+    if (!requestId || !action || !['approve', 'reject'].includes(action)) {
+      return NextResponse.json({ error: 'Invalid action or missing requestId' }, { status: 400 });
     }
+
+    const requestDoc = await collections.requests.doc(requestId).get();
+    if (!requestDoc.exists) {
+      return NextResponse.json({ error: 'Request not found or already processed' }, { status: 404 });
+    }
+
+    const transactionRequest = { id: requestDoc.id, ...requestDoc.data() } as any;
+
+    if (transactionRequest.status !== 'pending') {
+      return NextResponse.json({ error: `Request already ${transactionRequest.status}` }, { status: 409 });
+    }
+
+    if (action === 'approve') {
+      await handleApprove(transactionRequest, adminUser.userId);
+    } else { // action === 'reject'
+      if (!reason) {
+        return NextResponse.json({ error: 'Reason required for rejection' }, { status: 400 });
+      }
+      await handleReject(transactionRequest, reason, adminUser.userId);
+    }
+
+    return NextResponse.json({
+      message: `Request ${action}d successfully`,
+      success: true
+    });
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : 'Failed to process request';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
-async function handleApprove(request: any, adminId: string, reqId: string) {
-    // Get current user balance
-    const user = await prisma.user.findUnique({ where: { id: request.userId } });
-    if (!user) {
-        throw new Error('User not found');
-    }
+async function handleApprove(request: any, adminId: string) {
+  // 1. Get user and update balance
+  const userDoc = await collections.users.doc(request.userId).get();
+  const userData = userDoc.data();
+  const balanceChange = request.type === 'deposit' ? request.amount : -request.amount;
 
-    const balanceChange = request.type === 'deposit' ? request.amount : -request.amount;
+  // Check sufficient balance for withdrawal
+  if (request.type === 'withdraw' && userData!.balance < request.amount) {
+    throw new Error('Insufficient balance');
+  }
 
-    // Check sufficient balance for withdrawal
-    if (request.type === 'withdraw' && user.balance < request.amount) {
-        throw new Error('Insufficient balance');
-    }
+  const newBalance = userData!.balance + balanceChange;
 
-    const newBalance = user.balance + balanceChange;
+  // 2. Atomic transaction
+  const batch = admin.firestore().batch();
 
-    // Atomic transaction to update balance and request status
-    await prisma.$transaction(async (tx: PrismaClient) => {
-        // Update user balance
-        await tx.user.update({
-            where: { id: request.userId },
-            data: { balance: newBalance }
-        });
+  // Update user balance
+  batch.update(collections.users.doc(request.userId), {
+    balance: newBalance,
+    updatedAt: admin.firestore.Timestamp.now()
+  });
 
-        // Update request status
-        await tx.transactionRequest.update({
-            where: { id: request.id },
-            data: { status: 'executed', processedBy: adminId, executedAt: new Date() }
-        });
+  // Update request status
+  batch.update(collections.requests.doc(request.id), {
+    status: 'executed',
+    processedBy: adminId,
+    executedAt: admin.firestore.Timestamp.now()
+  });
 
-        // Create transaction history
-        await tx.transactionHistory.create({
-            data: {
-                userId: request.userId,
-                type: request.type,
-                amount: request.amount,
-                description: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} processed by admin`,
-                status: 'completed',
-                balanceBefore: user.balance,
-                balanceAfter: newBalance
-            }
-        });
+  // Create transaction history
+  const txId = collections.transactionHistory.doc().id;
+  batch.set(collections.transactionHistory.doc(txId), {
+    id: txId,
+    userId: request.userId,
+    type: request.type,
+    amount: request.amount,
+    description: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} processed by admin`,
+    status: 'completed',
+    balanceBefore: userData!.balance,
+    balanceAfter: newBalance,
+    createdAt: admin.firestore.Timestamp.now()
+  });
 
-        // Create audit log
-        await tx.auditLog.create({
-            data: {
-                userId: request.userId,
-                adminId,
-                action: `${request.type}_executed`,
-                resourceType: 'transaction_request',
-                resourceId: request.id,
-                changes: JSON.stringify({
-                    status: 'executed',
-                    amount: request.amount,
-                    balanceBefore: user.balance,
-                    balanceAfter: newBalance
-                }),
-                status: 'success'
-            }
-        });
-    });
+  // Create audit log
+  const auditId = collections.auditLogs.doc().id;
+  batch.set(collections.auditLogs.doc(auditId), {
+    id: auditId,
+    userId: request.userId,
+    adminId: adminId,
+    action: `${request.type}_executed`,
+    resourceType: 'transaction_request',
+    resourceId: request.id,
+    changes: JSON.stringify({ status: 'executed', amount: request.amount }),
+    status: 'success',
+    createdAt: admin.firestore.Timestamp.now()
+  });
 
-    // Create alert (outside transaction as it's not critical)
-    await prisma.alert.create({
-        data: {
-            userId: request.userId,
-            type: 'transaction',
-            title: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} Approved and Executed`,
-            message: `Your ${request.type} of ${request.amount.toFixed(2)} has been successfully processed.`,
-            read: false
-        }
-    });
+  // Create alert
+  const alertId = collections.alerts.doc().id;
+  batch.set(collections.alerts.doc(alertId), {
+    id: alertId,
+    userId: request.userId,
+    type: 'transaction',
+    title: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} Approved and Executed`,
+    message: `Your ${request.type} of ${request.amount.toFixed(2)} has been successfully processed.`,
+    read: false,
+    deleted: false,
+    createdAt: admin.firestore.Timestamp.now()
+  });
 
-    structuredLog('INFO', reqId, 'Transaction request approved and executed', { requestId: request.id, adminId, amount: request.amount, newBalance });
+  await batch.commit();
 }
 
-async function handleReject(request: any, reason: string, adminId: string, reqId: string) {
-    await prisma.transactionRequest.update({
-        where: { id: request.id },
-        data: { status: 'rejected', reason, processedBy: adminId }
-    });
+async function handleReject(request: any, reason: string, adminId: string) {
+  const batch = require('firebase-admin').firestore().batch();
 
-    await prisma.auditLog.create({
-        data: {
-            userId: request.userId,
-            adminId,
-            action: `${request.type}_rejected`,
-            resourceType: 'transaction_request',
-            resourceId: request.id,
-            changes: JSON.stringify({ status: 'rejected', reason }),
-            status: 'success'
-        }
-    });
+  // Update request status
+  batch.update(collections.requests.doc(request.id), {
+    status: 'rejected',
+    reason,
+    processedBy: adminId,
+    updatedAt: require('firebase-admin').firestore.Timestamp.now()
+  });
 
-    await prisma.alert.create({
-        data: {
-            userId: request.userId,
-            type: 'transaction',
-            title: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} Rejected`,
-            message: `Your ${request.type} request for ${request.amount.toFixed(2)} has been rejected. Reason: ${reason}`,
-            read: false
-        }
-    });
+  // Create audit log
+  const auditId = collections.auditLogs.doc().id;
+  batch.set(collections.auditLogs.doc(auditId), {
+    id: auditId,
+    userId: request.userId,
+    adminId: adminId,
+    action: `${request.type}_rejected`,
+    resourceType: 'transaction_request',
+    resourceId: request.id,
+    changes: JSON.stringify({ status: 'rejected', reason }),
+    status: 'success',
+    createdAt: require('firebase-admin').firestore.Timestamp.now()
+  });
 
-    structuredLog('INFO', reqId, 'Transaction request rejected', { requestId: request.id, adminId, reason });
+  // Create alert
+  const alertId = collections.alerts.doc().id;
+  batch.set(collections.alerts.doc(alertId), {
+    id: alertId,
+    userId: request.userId,
+    type: 'transaction',
+    title: `${request.type.charAt(0).toUpperCase() + request.type.slice(1)} Rejected`,
+    message: `Your ${request.type} request for ${request.amount.toFixed(2)} has been rejected. Reason: ${reason}`,
+    read: false,
+    deleted: false,
+    createdAt: require('firebase-admin').firestore.Timestamp.now()
+  });
+
+  await batch.commit();
 }

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateAuthTokens } from '@/lib/auth-utils';
 import bcryptjs from 'bcryptjs';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,8 +24,9 @@ export async function POST(request: NextRequest) {
     const normalizedEmail = email.toLowerCase().trim();
 
     console.log('Finding user by email');
-    // Fetch user from Prisma by email
-    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    // Fetch user from Firestore by email
+    const userSnapshot = await collections.users.where('email', '==', normalizedEmail).get();
+    const user = !userSnapshot.empty ? { id: userSnapshot.docs[0].id, ...userSnapshot.docs[0].data() } as any : null;
     console.log('User found:', !!user, user ? user.email : 'none');
 
     if (!user) {
@@ -82,9 +84,8 @@ export async function POST(request: NextRequest) {
 
     // Update last login timestamp
     try {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { lastLogin: new Date() }
+      await collections.users.doc(user.id).update({
+        lastLogin: admin.firestore.Timestamp.now()
       });
     } catch (error) {
       console.error('Failed to update last login:', error);

@@ -9,6 +9,7 @@ const nextConfig = {
     missingSuspenseWithCSRBailout: false,
   },
   webpack: (config, { isServer }) => {
+    // Resolve Node.js modules for server-side only
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
@@ -21,8 +22,34 @@ const nextConfig = {
         process: false,
         stream: false,
         util: false,
+        crypto: false,
+        path: false,
+        os: false,
+        url: false,
+        querystring: false,
+        http: false,
+        https: false,
+        zlib: false,
+        assert: false,
+        constants: false,
       };
     }
+
+    // Completely exclude Firebase Admin SDK from client-side bundles
+    if (!isServer) {
+      config.externals = config.externals || [];
+
+      // Add Firebase Admin SDK to externals
+      config.externals.push((context, request, callback) => {
+        if (request.startsWith('firebase-admin') ||
+            request.startsWith('@google-cloud/firestore') ||
+            request.startsWith('@firebase/')) {
+          return callback(null, `commonjs ${request}`);
+        }
+        callback();
+      });
+    }
+
     config.experiments = { ...config.experiments, asyncWebAssembly: true };
     return config;
   },

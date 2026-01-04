@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 
 // GET - Fetch user's transaction requests
 export async function GET(request: NextRequest) {
@@ -13,10 +14,16 @@ export async function GET(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    const requests = await prisma.transactionRequest.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' }
-    });
+    const requestsQuery = await collections.requests
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    const requests = requestsQuery.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
     return NextResponse.json({ requests });
   } catch (error: any) {
     if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {
@@ -59,18 +66,30 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const transactionRequest = await prisma.transactionRequest.create({
-      data: {
-        userId,
-        type,
-        amount,
-        bankName: bankName || null,
-        holderName: holderName || null,
-        accountNumber: accountNumber || null,
-        ifscCode: ifscCode || null,
-        status: 'pending'
-      }
+    const requestRef = await collections.requests.add({
+      userId,
+      type,
+      amount,
+      bankName: bankName || null,
+      holderName: holderName || null,
+      accountNumber: accountNumber || null,
+      ifscCode: ifscCode || null,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
     });
+
+    const transactionRequest = {
+      id: requestRef.id,
+      userId,
+      type,
+      amount,
+      bankName: bankName || null,
+      holderName: holderName || null,
+      accountNumber: accountNumber || null,
+      ifscCode: ifscCode || null,
+      status: 'pending',
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    };
 
     return NextResponse.json({ request: transactionRequest, message: 'Request created successfully' });
   } catch (error: any) {
@@ -99,22 +118,24 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Request ID is required' }, { status: 400 });
     }
 
-    const transactionRequest = await prisma.transactionRequest.findFirst({
-      where: { id: requestId, userId }
-    });
+    const requestDoc = await collections.requests.doc(requestId).get();
 
-    if (!transactionRequest) {
+    if (!requestDoc.exists || requestDoc.data()?.userId !== userId) {
       return NextResponse.json({ error: 'Request not found' }, { status: 404 });
     }
 
-    if (transactionRequest.status !== 'pending') {
+    const requestData = requestDoc.data()!;
+    const transactionRequest = { id: requestDoc.id, ...requestData };
+
+    if (requestData.status !== 'pending') {
       return NextResponse.json({ error: 'Only pending requests can be cancelled' }, { status: 400 });
     }
 
-    const updatedRequest = await prisma.transactionRequest.update({
-      where: { id: requestId },
-      data: { status: 'cancelled' }
+    await collections.requests.doc(requestId).update({
+      status: 'cancelled'
     });
+
+    const updatedRequest = { ...transactionRequest, status: 'cancelled' };
 
     return NextResponse.json({ request: updatedRequest, message: 'Request cancelled successfully' });
   } catch (error: any) {

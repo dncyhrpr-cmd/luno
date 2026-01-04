@@ -1,6 +1,6 @@
 import { coinGeckoAPI } from './coingecko-api';
-import { prisma } from './db';
-import { Order, PrismaClient } from '@prisma/client';
+import { collections } from './db';
+import admin from 'firebase-admin';
 
 // Mapping for symbols not on Binance to CoinGecko ids
 const symbolToCoinGeckoId: Record<string, string> = {
@@ -10,21 +10,21 @@ const symbolToCoinGeckoId: Record<string, string> = {
 
 export async function resolveExpiredBinaryOrders() {
   try {
-    const now = new Date();
+    const now = admin.firestore.Timestamp.fromDate(new Date());
 
     // 1. Fetch only relevant orders directly from DB
-    const expiredOrders = await prisma.order.findMany({
-      where: {
-        status: { in: ['active', 'approved'] }, // Active or admin approved orders
-        orderType: 'binary',
-        resolvedAt: { lte: now } // Only orders where time has passed
-      }
-    });
+    const expiredOrdersSnapshot = await collections.orders
+      .where('status', 'in', ['active', 'approved'])
+      .where('orderType', '==', 'binary')
+      .where('resolvedAt', '<=', now)
+      .get();
+
+    const expiredOrders = expiredOrdersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     if (expiredOrders.length === 0) return;
 
     // Group by userId for efficiency
-    const ordersByUser = expiredOrders.reduce((acc: Record<string, Order[]>, order: Order) => {
+    const ordersByUser = expiredOrders.reduce((acc: Record<string, any[]>, order: any) => {
       if (!acc[order.userId]) acc[order.userId] = [];
       acc[order.userId].push(order);
       return acc;
@@ -34,7 +34,7 @@ export async function resolveExpiredBinaryOrders() {
       const userOrders = ordersByUser[userId];
 
       // 2. Efficiently fetch unique prices
-      const symbols = [...new Set(userOrders.map((o: Order) => o.symbol))] as string[];
+      const symbols = [...new Set(userOrders.map((o: any) => o.symbol))] as string[];
       const priceMap = new Map<string, number>();
 
       await Promise.all(
@@ -75,11 +75,12 @@ export async function resolveExpiredBinaryOrders() {
         if (currentPrice === undefined) continue;
 
         // Check if the binary asset is locked
-        const binaryAsset = await prisma.asset.findUnique({
-          where: {
-            userId_symbol: { userId, symbol: `BINARY-${order.id}` }
-          }
-        });
+        const binaryAssetsSnapshot = await collections.assets
+          .where('userId', '==', userId)
+          .where('symbol', '==', `BINARY-${order.id}`)
+          .get();
+
+        const binaryAsset = !binaryAssetsSnapshot.empty ? { id: binaryAssetsSnapshot.docs[0].id, ...binaryAssetsSnapshot.docs[0].data() } : null;
 
         // If asset exists and is locked, skip resolution
         if ((binaryAsset as any)?.locked) continue;
@@ -99,51 +100,59 @@ export async function resolveExpiredBinaryOrders() {
         const payout = isWin ? (order.amount || 0) + pnl : 0;
         const status = isWin ? 'win' : 'loss';
 
-        // 4. Atomic Transaction for Safety
-        await prisma.$transaction(async (tx: PrismaClient) => {
-          // Update Order
-          await tx.order.update({
-            where: { id: order.id },
-            data: {
-              status,
-              exitPrice: currentPrice,
-              pnl,
-              resolvedAt: new Date(),
-            },
-          });
+        // 4. Update order and handle payouts
+        const batch = admin.firestore().batch();
 
-          if (payout > 0) {
-            // Get balance before payout
-            const userBefore = await tx.user.findUnique({ where: { id: userId } });
-
-            // Atomic increment to prevent balance overwrites
-            const updatedUser = await tx.user.update({
-              where: { id: userId },
-              data: { balance: { increment: payout } },
-            });
-
-            await tx.transactionHistory.create({
-              data: {
-                userId,
-                type: 'payout',
-                amount: payout,
-                symbol: order.symbol,
-                description: `Binary win: ${order.symbol}`,
-                status: 'completed',
-                balanceBefore: userBefore!.balance,
-                balanceAfter: updatedUser.balance
-              },
-            });
-          }
-
-          // Cleanup virtual assets
-          await tx.asset.deleteMany({
-            where: {
-              userId,
-              symbol: `BINARY-${order.id}`
-            }
-          });
+        // Update Order
+        batch.update(collections.orders.doc(order.id), {
+          status,
+          exitPrice: currentPrice,
+          pnl,
+          resolvedAt: admin.firestore.Timestamp.now(),
+          updatedAt: admin.firestore.Timestamp.now()
         });
+
+        if (payout > 0) {
+          // Get user balance
+          const userDoc = await collections.users.doc(userId).get();
+          const userData = userDoc.data();
+          const balanceBefore = userData?.balance || 0;
+          const balanceAfter = balanceBefore + payout;
+
+          // Update user balance
+          batch.update(collections.users.doc(userId), {
+            balance: balanceAfter,
+            updatedAt: admin.firestore.Timestamp.now()
+          });
+
+          // Create transaction history
+          const txId = collections.transactionHistory.doc().id;
+          batch.set(collections.transactionHistory.doc(txId), {
+            id: txId,
+            userId,
+            type: 'payout',
+            amount: payout,
+            symbol: order.symbol,
+            description: `Binary win: ${order.symbol}`,
+            status: 'completed',
+            balanceBefore,
+            balanceAfter,
+            createdAt: admin.firestore.Timestamp.now()
+          });
+        }
+
+        // Cleanup virtual assets
+        const virtualAssetsSnapshot = await collections.assets
+          .where('userId', '==', userId)
+          .where('symbol', '==', `BINARY-${order.id}`)
+          .get();
+
+        virtualAssetsSnapshot.docs.forEach(doc => {
+          batch.delete(doc.ref);
+        });
+
+        // Commit the batch
+        await batch.commit();
       }
     }
   } catch (error) {

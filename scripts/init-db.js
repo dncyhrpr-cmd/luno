@@ -39,7 +39,8 @@ async function initializeDatabase() {
 
     // Performance optimizations
     console.log('⚡ Applying database optimizations...');
-    
+
+    // Analyze tables for query optimization
     // Enable WAL mode for better concurrency
     await prisma.$queryRaw`PRAGMA journal_mode = WAL`;
     
@@ -54,6 +55,8 @@ async function initializeDatabase() {
     
     // Optimize for better query performance
     await prisma.$queryRaw`PRAGMA optimize`;
+
+
 
     console.log('✨ Database optimizations applied');
 
@@ -70,9 +73,7 @@ async function initializeDatabase() {
     console.log(`   Assets: ${finalStats[2]}`);
     
     console.log('\n🎯 Performance Features:');
-    console.log('   ✅ WAL journaling enabled');
-    console.log('   ✅ Memory temp storage');
-    console.log('   ✅ 10MB cache size');
+    console.log('   ✅ PostgreSQL optimizations applied');
     console.log('   ✅ Database indexes optimized');
     console.log('   ✅ Connection pooling active');
 

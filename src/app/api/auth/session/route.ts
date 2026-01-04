@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
 
 async function handleSessionCheck(request: NextRequest) {
@@ -12,10 +13,11 @@ async function handleSessionCheck(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
+    const userDoc = await collections.users.doc(userId).get();
+    if (!userDoc.exists) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
+    const user = userDoc.data() as any;
 
     // Safely parse roles string to array
     let roles: string[] = [];

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
 import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
 import { verifyAdmin } from '@/lib/auth-utils';
+import admin from 'firebase-admin';
 
 // POST - Resolve binary asset as win/loss (admin only)
 export async function POST(request: NextRequest) {
@@ -34,14 +35,13 @@ export async function POST(request: NextRequest) {
         structuredLog('INFO', reqId, 'Processing binary asset resolution', { adminId: adminPayload.userId, userId, assetId, outcome });
 
         // Get the asset
-        const asset = await prisma.asset.findUnique({
-            where: { id: assetId }
-        });
-
-        if (!asset) {
+        const assetDoc = await collections.assets.doc(assetId).get();
+        if (!assetDoc.exists) {
             structuredLog('WARN', reqId, 'Asset not found', { assetId, status: 404 });
             return NextResponse.json({ error: 'Asset not found', correlationId: reqId }, { status: 404 });
         }
+
+        const asset = { id: assetDoc.id, ...assetDoc.data() } as any;
 
         if (!asset.symbol.startsWith('BINARY-')) {
             structuredLog('WARN', reqId, 'Asset is not a binary option', { assetId, symbol: asset.symbol, status: 400 });
@@ -49,35 +49,36 @@ export async function POST(request: NextRequest) {
         }
 
         const orderId = asset.symbol.replace('BINARY-', '');
-        const order = await prisma.order.findUnique({
-            where: { id: orderId }
-        });
+        const orderDoc = await collections.orders.doc(orderId).get();
 
-        if (!order) {
+        if (!orderDoc.exists) {
             structuredLog('WARN', reqId, 'Corresponding order not found', { orderId, status: 404 });
             return NextResponse.json({ error: 'Corresponding order not found', correlationId: reqId }, { status: 404 });
         }
 
+        const order = { id: orderDoc.id, ...orderDoc.data() };
+
         // Set admin outcome and resolve immediately
-        await prisma.order.update({
-            where: { id: order.id },
-            data: {
-                status: 'approved', // Mark as approved by admin
-                direction: outcome === 'win' ? 'UP' : 'DOWN', // Override direction if needed
-                resolvedAt: new Date(), // Resolve immediately
-            },
+        await collections.orders.doc(order.id).update({
+            status: 'approved', // Mark as approved by admin
+            direction: outcome === 'win' ? 'UP' : 'DOWN', // Override direction if needed
+            resolvedAt: admin.firestore.Timestamp.now(), // Resolve immediately
+            updatedAt: admin.firestore.Timestamp.now()
         });
 
         // Keep the asset for now, resolution at expiry
 
         // Create notification alert
-        await prisma.alert.create({
-            data: {
-                userId,
-                type: 'trade_approved',
-                title: 'Trade Approved',
-                message: `Your binary trade has been approved as ${outcome} by administrator. It will resolve at expiry.`,
-            },
+        const alertId = collections.alerts.doc().id;
+        await collections.alerts.doc(alertId).set({
+            id: alertId,
+            userId,
+            type: 'trade_approved',
+            title: 'Trade Approved',
+            message: `Your binary trade has been approved as ${outcome} by administrator. It will resolve at expiry.`,
+            read: false,
+            deleted: false,
+            createdAt: admin.firestore.Timestamp.now()
         });
 
         structuredLog('INFO', reqId, 'Binary approval completed successfully', { userId, assetId, outcome, adminId: adminPayload.userId });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-import { prisma } from '@/lib/db';
+import { collections } from '@/lib/db';
+import admin from 'firebase-admin';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,11 +14,11 @@ export async function POST(request: NextRequest) {
     const userId = payload.userId;
 
     if (payload.jti && payload.exp) {
-      await prisma.tokenRevocation.create({
-        data: {
-          userId,
-          expiresAt: new Date(payload.exp * 1000)
-        }
+      const revocationId = collections.tokenRevocation.doc().id;
+      await collections.tokenRevocation.doc(revocationId).set({
+        id: revocationId,
+        userId,
+        expiresAt: admin.firestore.Timestamp.fromDate(new Date(payload.exp * 1000))
       });
     }
 
