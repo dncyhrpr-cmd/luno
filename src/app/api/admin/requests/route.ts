@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     }
 
     const requestsSnapshot = await collections.requests.where('status', '==', 'pending').get();
-    const pendingRequests = requestsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const pendingRequests = requestsSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
     const requestsWithUserDetails = await Promise.all(
       pendingRequests.map(async (req: any) => {

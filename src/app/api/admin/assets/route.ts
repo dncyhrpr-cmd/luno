@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
 
         // Get user's current assets
         const userAssetsSnapshot = await collections.assets.where('userId', '==', userId).get();
-        const userAssets = userAssetsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const userAssets = userAssetsSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
         if (userAssets.length === 0) {
             structuredLog('WARN', reqId, 'User has no assets to seize', { userId, status: 400 });
             return NextResponse.json({ error: 'User has no assets to seize', correlationId: reqId }, { status: 400 });

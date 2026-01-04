@@ -72,7 +72,7 @@
     },
 
     {
-      "collectionGroup": "tokenRevocation",
+      "collectionGroup": "token_revocation",
       "queryScope": "COLLECTION",
       "fields": [
         {
@@ -86,7 +86,7 @@
       ]
     },
     {
-      "collectionGroup": "tokenRevocation",
+      "collectionGroup": "token_revocation",
       "queryScope": "COLLECTION",
       "fields": [
         {

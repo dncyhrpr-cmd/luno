@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     // For now, assume any authenticated user can access, but in production check roles
 
     const chatsSnapshot = await collections.chats.orderBy('updatedAt', 'desc').get();
-    const chats = await Promise.all(chatsSnapshot.docs.map(async (chatDoc) => {
+    const chats = await Promise.all(chatsSnapshot.docs.map(async (chatDoc: admin.firestore.DocumentSnapshot) => {
       const chat = { id: chatDoc.id, ...chatDoc.data() } as any;
 
       // Get user info

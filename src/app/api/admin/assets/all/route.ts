@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
 
     // Get all assets with user info
     const assetsSnapshot = await collections.assets.get();
-    const assets = await Promise.all(assetsSnapshot.docs.map(async (doc) => {
+    const assets = await Promise.all(assetsSnapshot.docs.map(async (doc: admin.firestore.DocumentSnapshot) => {
       const asset = { id: doc.id, ...doc.data() };
       const userDoc = await collections.users.doc((asset as any).userId).get();
       const user = userDoc.exists ? userDoc.data() : null;
@@ -32,10 +32,13 @@ export async function GET(request: NextRequest) {
       .where('symbol', '<', 'BINARY-~')
       .get();
 
-    const binaryAssets = binaryAssetsSnapshot.docs.map(doc => ({
-      symbol: doc.data().symbol,
-      userId: doc.data().userId
-    }));
+    const binaryAssets = binaryAssetsSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => {
+      const data = doc.data();
+      return data ? {
+        symbol: data.symbol,
+        userId: data.userId
+      } : null;
+    }).filter((item: any) => item !== null);
 
     // For each asset, check if user has active binary trades for that underlying symbol
     const assetsWithStatus = assets.map((asset: any) => {

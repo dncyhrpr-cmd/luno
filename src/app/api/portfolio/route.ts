@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     }
 
     const user = userDoc.data()!;
-    const assets = assetsQuery.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const assets = assetsQuery.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
     // In a real-world scenario, you might enrich asset data with real-time prices here
     // For now, we use the stored average price.

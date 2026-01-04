@@ -34,11 +34,11 @@ export async function GET(request: NextRequest) {
       .orderBy('createdAt', 'asc')
       .get();
 
-    const messages = messagesQuery.docs.map(doc => ({
+    const messages = messagesQuery.docs.map((doc: admin.firestore.DocumentSnapshot) => ({
       id: doc.id,
-      sender: doc.data().sender,
-      text: doc.data().text,
-      timestamp: doc.data().createdAt
+      sender: doc.data()?.sender,
+      text: doc.data()?.text,
+      timestamp: doc.data()?.createdAt
     }));
 
     return NextResponse.json({

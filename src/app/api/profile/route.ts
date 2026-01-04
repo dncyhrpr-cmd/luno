@@ -71,8 +71,8 @@ export async function PUT(request: NextRequest) {
     const usernameQuery = await collections.users.where('username', '==', username).get();
     const emailQuery = await collections.users.where('email', '==', email).get();
 
-    const existingUsername = usernameQuery.docs.find(doc => doc.id !== userId);
-    const existingEmail = emailQuery.docs.find(doc => doc.id !== userId);
+    const existingUsername = usernameQuery.docs.find((doc: admin.firestore.DocumentSnapshot) => doc.id !== userId);
+    const existingEmail = emailQuery.docs.find((doc: admin.firestore.DocumentSnapshot) => doc.id !== userId);
 
     if (existingUsername || existingEmail) {
       return NextResponse.json({ error: 'Username or email already taken' }, { status: 409 });

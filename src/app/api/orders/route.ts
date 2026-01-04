@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
       .orderBy('createdAt', 'desc')
       .get();
 
-    const orders = ordersQuery.docs.map(doc => ({
+    const orders = ordersQuery.docs.map((doc: admin.firestore.DocumentSnapshot) => ({
       id: doc.id,
       ...doc.data()
     }));

@@ -22,19 +22,19 @@ export async function GET(request: NextRequest) {
 
     // Fetch assets
     const assetsSnapshot = await collections.assets.where('userId', '==', userId).get();
-    const assets = assetsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const assets = assetsSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
     // Fetch orders
     const ordersSnapshot = await collections.orders.where('userId', '==', userId).orderBy('createdAt', 'desc').get();
-    const orders = ordersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const orders = ordersSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
     // Fetch transaction requests
     const requestsSnapshot = await collections.requests.where('userId', '==', userId).orderBy('createdAt', 'desc').get();
-    const transactionRequests = requestsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const transactionRequests = requestsSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
     // Fetch transaction history
     const historySnapshot = await collections.transactionHistory.where('userId', '==', userId).orderBy('createdAt', 'desc').get();
-    const transactionHistory = historySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const transactionHistory = historySnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
     // Fetch active binary orders
     const activeBinaryOrdersSnapshot = await collections.orders
@@ -42,7 +42,7 @@ export async function GET(request: NextRequest) {
       .where('status', '==', 'active')
       .where('orderType', '==', 'binary')
       .get();
-    const activeBinaryOrders = activeBinaryOrdersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const activeBinaryOrders = activeBinaryOrdersSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
     // Create temporary assets from active binary orders
     const tempAssets = activeBinaryOrders.map((order: any) => ({

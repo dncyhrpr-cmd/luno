@@ -19,7 +19,7 @@ export async function resolveExpiredBinaryOrders() {
       .where('resolvedAt', '<=', now)
       .get();
 
-    const expiredOrders = expiredOrdersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const expiredOrders = expiredOrdersSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
     if (expiredOrders.length === 0) return;
 
@@ -147,7 +147,7 @@ export async function resolveExpiredBinaryOrders() {
           .where('symbol', '==', `BINARY-${order.id}`)
           .get();
 
-        virtualAssetsSnapshot.docs.forEach(doc => {
+        virtualAssetsSnapshot.docs.forEach((doc: admin.firestore.DocumentSnapshot) => {
           batch.delete(doc.ref);
         });
 

@@ -1,9 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
+  // output: 'export', // Removed for Netlify Functions deployment
   compress: true, // Enable gzip/brotli compression
   images: {
-    unoptimized: true,
+    unoptimized: false, // Enable image optimization for Netlify
   },
   experimental: {
     missingSuspenseWithCSRBailout: false,

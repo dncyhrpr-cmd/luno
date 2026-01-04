@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
         
         // Fetch users from Firestore
         const usersSnapshot = await collections.users.orderBy('createdAt', 'desc').get();
-        const usersWithDetails = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const usersWithDetails = usersSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
         
         const total = usersWithDetails.length;
 

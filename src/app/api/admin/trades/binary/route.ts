@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     // Get all active orders (not resolved)
     const ordersSnapshot = await collections.orders.get();
     const activeOrders = ordersSnapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }))
       .filter((order: any) => !['win', 'loss'].includes(order.status));
 
     console.log('Found active orders:', activeOrders.length);
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
       .where('symbol', '<', 'BINARY-~')
       .get();
 
-    const binaryAssets = await Promise.all(binaryAssetsSnapshot.docs.map(async (doc) => {
+    const binaryAssets = await Promise.all(binaryAssetsSnapshot.docs.map(async (doc: admin.firestore.DocumentSnapshot) => {
       const asset = { id: doc.id, ...doc.data() } as any;
       const userDoc = await collections.users.doc(asset.userId).get();
       const user = userDoc.exists ? userDoc.data() : null;
