@@ -22,13 +22,11 @@
 # NEXT_PUBLIC_FIREBASE_APP_ID
 # NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 
-[[functions]]
-  name = "resolve-binary-trades"
+[functions.resolve-binary-trades]
   directory = "netlify/functions/resolve-binary-trades"
   schedule = "@every 30s"
 
-[[functions]]
-  name = "delete-old-resolved-trades"
+[functions.delete-old-resolved-trades]
   directory = "netlify/functions/delete-old-resolved-trades"
   schedule = "@every 30s"
 
