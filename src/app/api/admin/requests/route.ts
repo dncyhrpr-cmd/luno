@@ -1,28 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { collections } from '@/lib/db';
-import jwt from 'jsonwebtoken';
+import { verifyAdmin } from '@/lib/auth-utils';
 import admin from 'firebase-admin';
-
-function verifyAdminToken(request: NextRequest) {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
-  }
-
-  const token = authHeader.substring(7);
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as any;
-    if (decoded.role !== 'admin') return null;
-    return decoded;
-  } catch (error: any) {
-    return null;
-  }
-}
 
 // GET - Fetch all pending transaction requests (admin only)
 export async function GET(request: NextRequest) {
   try {
-    const adminUser = verifyAdminToken(request);
+    const adminUser = await verifyAdmin(request, 'admin-requests-get');
     if (!adminUser) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -54,7 +38,7 @@ export async function GET(request: NextRequest) {
 // PUT - Approve or reject a transaction request (admin only)
 export async function PUT(request: NextRequest) {
   try {
-    const adminUser = verifyAdminToken(request);
+    const adminUser = await verifyAdmin(request, 'admin-requests-put');
     if (!adminUser) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     // Check if admin - assuming roles include 'admin'
     // For now, assume any authenticated user can access, but in production check roles
 
-    const chatsSnapshot = await collections.chats.orderBy('updatedAt', 'desc').get();
+    const chatsSnapshot = await collections.chats.get();
     const chats = await Promise.all(chatsSnapshot.docs.map(async (chatDoc: admin.firestore.DocumentSnapshot) => {
       const chat = { id: chatDoc.id, ...chatDoc.data() } as any;
 
@@ -87,10 +87,10 @@ export async function POST(request: NextRequest) {
 
     await collections.messages.doc(messageId).set(messageData);
 
-    // Update chat updatedAt
-    await collections.chats.doc(chatId).update({
+    // Update chat updatedAt (use set with merge to handle missing fields)
+    await collections.chats.doc(chatId).set({
       updatedAt: admin.firestore.Timestamp.now()
-    });
+    }, { merge: true });
 
     return NextResponse.json(messageData);
   } catch (error) {
