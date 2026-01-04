@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can read/write their own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Admin users can read all user data
+    match /users/{userId} {
+      allow read: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['admin']);
+    }
+
+    // Orders - users can read/write their own
+    match /orders/{orderId} {
+      allow read, write: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Scheduled orders
+    match /scheduledOrders/{orderId} {
+      allow read, write: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Assets - users can read/write their own
+    match /assets/{assetId} {
+      allow read, write: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Transaction requests - users can read/write their own
+    match /requests/{requestId} {
+      allow read, write: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Transaction history - users can read their own
+    match /transaction_history/{transactionId} {
+      allow read: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Alerts - users can read/write their own
+    match /alerts/{alertId} {
+      allow read, write: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // KYC data - users can read/write their own
+    match /kyc_data/{kycId} {
+      allow read, write: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Audit logs - only admins can read
+    match /audit_logs/{logId} {
+      allow read: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['admin']);
+    }
+
+    // Chat messages - users can read/write their own conversations
+    match /chats/{chatId} {
+      allow read, write: if request.auth != null &&
+        (resource.data.userId == request.auth.uid || resource.data.adminId == request.auth.uid);
+    }
+
+    match /messages/{messageId} {
+      allow read, write: if request.auth != null &&
+        exists(/databases/$(database)/documents/chats/$(resource.data.chatId)) &&
+        get(/databases/$(database)/documents/chats/$(resource.data.chatId)).data.userId == request.auth.uid;
+    }
+
+    // Token revocation - users can read their own
+    match /tokenRevocation/{revocationId} {
+      allow read: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // Allow admins to read/write everything
+    match /{document=**} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles.hasAny(['admin']);
+    }
+  }
+}
