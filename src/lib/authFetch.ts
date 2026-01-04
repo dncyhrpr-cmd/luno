@@ -11,6 +11,13 @@ export function useAuthFetch() {
     retries = 2,
     retryDelay = 800
   ): Promise<SafeFetchResult<T>> => {
+    // Ensure API calls use the correct base URL
+    let apiUrl = input as string;
+    if (typeof input === 'string' && input.startsWith('/api/')) {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      apiUrl = `${baseUrl}${input}`;
+    }
+
     // Add authorization header if we have a token
     const headers = new Headers(init?.headers);
     if (accessToken && !headers.has('Authorization')) {
@@ -19,7 +26,7 @@ export function useAuthFetch() {
 
     const authInit = { ...init, headers };
 
-    let result = await safeFetch<T>(input, authInit, retries, retryDelay);
+    let result = await safeFetch<T>(apiUrl, authInit, retries, retryDelay);
 
     // If unauthorized and we have a token, try refreshing once
     if (result.status === 401 && accessToken) {
