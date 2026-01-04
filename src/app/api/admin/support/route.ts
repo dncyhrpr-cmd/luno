@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
-
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/db';
 
 // GET /api/admin/support - get all chats
 export async function GET(request: NextRequest) {
