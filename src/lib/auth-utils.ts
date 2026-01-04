@@ -6,8 +6,8 @@ import { collections } from './db';
 import admin from 'firebase-admin';
 
 // Get secrets from environment variables
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback_secret_must_be_strong');
-const REFRESH_SECRET = new TextEncoder().encode(process.env.REFRESH_SECRET || 'fallback_refresh_secret_must_be_strong');
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'your-super-secure-jwt-secret-here-min-32-chars-luno-trading-app-2024-production');
+const REFRESH_SECRET = new TextEncoder().encode(process.env.REFRESH_SECRET || 'your-super-secure-refresh-secret-here-min-32-chars-luno-trading-app-2024');
 const ISSUER = 'luno-app';
 const AUDIENCE = 'luno-web';
 const ACCESS_TOKEN_EXPIRY = '15m'; // Short-lived access token
