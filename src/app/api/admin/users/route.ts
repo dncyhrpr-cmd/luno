@@ -132,7 +132,9 @@ export async function PUT(request: NextRequest) {
         if (score !== undefined) updateData.clientScore = score;
 
         // Update user
+        console.log('Updating user', userId, 'with data:', updateData);
         await collections.users.doc(userId).update(updateData);
+        console.log('User updated successfully');
 
         // Clear cache to ensure updated data is fetched
         adminUsersCache.flushAll();
