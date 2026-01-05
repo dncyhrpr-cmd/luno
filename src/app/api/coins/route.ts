@@ -16,7 +16,9 @@ export async function GET(request: NextRequest) {
 
     // Fetch all USDT symbols from Binance
     const binanceSymbols = await binanceAPI.getUSDTSymbols();
+    console.log('Binance symbols fetched:', binanceSymbols.length);
     if (binanceSymbols.length === 0) {
+      console.error('No Binance symbols fetched');
       if (cachedCoins) return NextResponse.json({ coins: cachedCoins, cached: true, stale: true });
       return NextResponse.json({ error: 'Failed to fetch Binance symbols' }, { status: 500 });
     }
