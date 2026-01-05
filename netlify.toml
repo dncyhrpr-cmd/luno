@@ -4,6 +4,12 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  JWT_SECRET = "your-super-secure-jwt-secret-here-min-32-chars-luno-trading-app"
+  FIREBASE_PROJECT_ID = "luno-3eba2"
+  FIREBASE_CLIENT_EMAIL = "firebase-adminsdk-m9i7p@luno-3eba2.iam.gserviceaccount.com"
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID = "luno-3eba2"
+  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET = "luno-3eba2.appspot.com"
+  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN = "luno-3eba2.firebaseapp.com"
 
 # Firebase Admin SDK (Server-side) - Set these in Netlify environment variables
 # FIREBASE_PROJECT_ID
