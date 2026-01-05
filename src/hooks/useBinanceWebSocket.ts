@@ -25,14 +25,22 @@ export const useBinanceWebSocket = (symbols: string[]) => {
 
     // Connection function with retry logic
     const connectWebSocket = useCallback((attemptCount = 0) => {
-        if (!symbolsKey) return;
+        console.log('DEBUG: WS connectWebSocket called with symbolsKey:', symbolsKey, 'attempt:', attemptCount);
+        if (!symbolsKey) {
+            console.log('DEBUG: WS no symbolsKey, returning');
+            return;
+        }
         if (isConnectingRef.current) {
             console.log('WS connection already in progress, skipping');
             return;
         }
 
         const symbolList = symbolsKey.split(',');
-        if (symbolList.length === 0 || (symbolList.length === 1 && symbolList[0] === '')) return;
+        console.log('DEBUG: WS symbolList:', symbolList);
+        if (symbolList.length === 0 || (symbolList.length === 1 && symbolList[0] === '')) {
+            console.log('DEBUG: WS empty symbolList, returning');
+            return;
+        }
 
         // Limit to first 10 symbols to avoid URL length limits and connection issues
         const limitedSymbols = symbolList.slice(0, 10);
@@ -63,7 +71,7 @@ export const useBinanceWebSocket = (symbols: string[]) => {
         wsRef.current = ws;
 
         ws.onopen = () => {
-            console.log('Binance WS Connected');
+            console.log('DEBUG: Binance WS Connected successfully');
             setIsConnected(true);
             setConnectionAttempts(0); // Reset on successful connection
             isConnectingRef.current = false;
@@ -112,7 +120,7 @@ export const useBinanceWebSocket = (symbols: string[]) => {
         };
 
         ws.onclose = (event) => {
-            console.log('Binance WS Closed:', 'Code:', event.code, 'Reason:', event.reason, 'WasClean:', event.wasClean);
+            console.log('DEBUG: Binance WS Closed:', 'Code:', event.code, 'Reason:', event.reason, 'WasClean:', event.wasClean);
             setIsConnected(false);
             isConnectingRef.current = false;
 
@@ -125,16 +133,18 @@ export const useBinanceWebSocket = (symbols: string[]) => {
             // Don't retry if it was a deliberate close (code 1000)
             if (event.code !== 1000 && attemptCount < 3) {
                 const retryDelay = Math.min(1000 * Math.pow(2, attemptCount), 30000); // Exponential backoff, max 30s
-                console.log(`Retrying WS connection in ${retryDelay}ms...`);
+                console.log(`DEBUG: Retrying WS connection in ${retryDelay}ms...`);
                 reconnectTimeoutRef.current = setTimeout(() => {
                     setConnectionAttempts(prev => prev + 1);
                     connectWebSocket(attemptCount + 1);
                 }, retryDelay);
+            } else {
+                console.log('DEBUG: WS not retrying, code:', event.code, 'attempts:', attemptCount);
             }
         };
 
         ws.onerror = (err) => {
-            console.error('Binance WS Error:', err, 'ReadyState:', ws.readyState);
+            console.error('DEBUG: Binance WS Error:', err, 'ReadyState:', ws.readyState);
             setIsConnected(false);
             isConnectingRef.current = false;
             // Error handling is done in onclose

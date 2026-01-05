@@ -58,7 +58,7 @@ const ProfilePage: React.FC = () => {
             try {
                 const res = await authFetch('/api/profile');
                 if (res.ok) {
-                    setProfileData(res.data);
+                    setProfileData(res.data.profile);
                 } else {
                     console.error('Profile fetch failed:', res.error);
                 }

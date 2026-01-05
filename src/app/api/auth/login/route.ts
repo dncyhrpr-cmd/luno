@@ -55,6 +55,11 @@ export async function POST(request: NextRequest) {
       userSnapshot = await collections.users.where('email', '==', normalizedEmail).get();
     } catch (dbError: any) {
       console.error('Database query error:', dbError);
+      console.error('Error code:', dbError.code);
+      console.error('Error message:', dbError.message);
+      console.error('Firebase project ID:', process.env.FIREBASE_PROJECT_ID ? 'set' : 'not set');
+      console.error('Firebase client email:', process.env.FIREBASE_CLIENT_EMAIL ? 'set' : 'not set');
+      console.error('Firebase private key:', process.env.FIREBASE_PRIVATE_KEY ? 'set' : 'not set');
       return createCORSResponse({ error: 'Database connection failed' }, 500);
     }
     const user = !userSnapshot.empty ? { id: userSnapshot.docs[0].id, ...userSnapshot.docs[0].data() } as any : null;

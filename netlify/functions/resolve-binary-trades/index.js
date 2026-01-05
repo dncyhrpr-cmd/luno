@@ -97,8 +97,8 @@ exports.handler = async (event, context) => {
                     }
                 }
 
-                // Calculate PnL (since amount is deducted upfront, for win add back amount + profit, for loss 0)
-                const pnl = outcome === 'win' ? order.amount + (order.amount * (order.profitPercent / 100)) : 0;
+                // Calculate PnL - for win, return stake + profit; for loss, deduct stake (amount was added upfront)
+                const pnl = outcome === 'win' ? order.amount + (order.amount * (order.profitPercent / 100)) : -order.amount;
 
                 // Update order and balance in transaction
                 await admin.firestore().runTransaction(async (transaction) => {
@@ -110,9 +110,8 @@ exports.handler = async (event, context) => {
                     const balanceBefore = userSnap.exists ? userSnap.data()?.balance || 0 : 0;
 
                     // Update order
-                    const finalStatus = isAdminSelected ? 'done' : 'resolved';
                     transaction.update(orderRef, {
-                        status: finalStatus,
+                        status: 'resolved',
                         result: outcome,
                         pnl: pnl,
                         resolvedAt: now,
@@ -149,10 +148,7 @@ exports.handler = async (event, context) => {
                     await collections.assets.doc(assetSnapshot.docs[0].id).delete();
                 }
 
-                // Delete the order if admin selected
-                if (isAdminSelected) {
-                    await collections.orders.doc(order.id).delete();
-                }
+                // Keep all resolved orders for admin visibility
 
                 // Create notification
                 const title = isAdminSelected ? 'Trade Resolved by Admin' : 'Trade Auto-Resolved';

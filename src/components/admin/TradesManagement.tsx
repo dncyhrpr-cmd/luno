@@ -25,6 +25,8 @@ interface BinaryTrade {
   isResolved: boolean;
   canResolve: boolean;
   isBinary: boolean;
+  adminOutcome: 'win' | 'loss' | null;
+  adminSelectedAt: string | null;
 }
 
 interface AssetLock {
@@ -113,14 +115,14 @@ const TradesManagement: React.FC = () => {
     return () => clearInterval(interval);
   }, [activeSubTab, fetchBinaryTrades, fetchAssets]);
 
-  // Resolve individual trade
+  // Set admin outcome for trade
   const handleResolveTrade = async (assetId: string | null, userId: string, outcome: 'win' | 'loss') => {
     if (!assetId) {
       alert('Invalid trade');
       return;
     }
 
-    if (!confirm(`Are you sure you want to approve this trade as ${outcome}?`)) return;
+    if (!confirm(`Are you sure you want to set this trade outcome as ${outcome}? The trade will resolve at expiry.`)) return;
 
     try {
       const res = await authFetch('/api/admin/assets/resolve', {
@@ -130,24 +132,24 @@ const TradesManagement: React.FC = () => {
       });
 
       if (res.ok) {
-        alert(`Trade approved as ${outcome}`);
+        alert(`Admin outcome set to ${outcome}. Trade will resolve at expiry.`);
         fetchBinaryTrades(true);
       } else {
-        alert('Failed to approve trade');
+        alert('Failed to set admin outcome');
       }
     } catch (error) {
-      alert('Error resolving trade');
+      alert('Error setting admin outcome');
     }
   };
 
-  // Bulk resolve selected trades
+  // Bulk set admin outcome for selected trades
   const handleBulkResolve = async (outcome: 'win' | 'loss') => {
     if (selectedTrades.size === 0) {
       alert('No trades selected');
       return;
     }
 
-    if (!confirm(`Approve ${selectedTrades.size} selected trades as ${outcome}?`)) return;
+    if (!confirm(`Set admin outcome to ${outcome} for ${selectedTrades.size} selected trades? They will resolve at expiry.`)) return;
 
     let successCount = 0;
     for (const tradeId of selectedTrades) {
@@ -161,12 +163,12 @@ const TradesManagement: React.FC = () => {
           });
           if (res.ok) successCount++;
         } catch (error) {
-          console.error('Error resolving trade', tradeId, error);
+          console.error('Error setting admin outcome', tradeId, error);
         }
       }
     }
 
-    alert(`Approved ${successCount}/${selectedTrades.size} trades`);
+    alert(`Admin outcome set for ${successCount}/${selectedTrades.size} trades`);
     setSelectedTrades(new Set());
     fetchBinaryTrades(true);
   };
@@ -323,13 +325,13 @@ const TradesManagement: React.FC = () => {
                 onClick={() => handleBulkResolve('win')}
                 className="px-4 py-2 text-sm font-bold text-white bg-green-600 rounded-xl hover:bg-green-700"
               >
-                Approve as Win
+                Set as Win
               </button>
               <button
                 onClick={() => handleBulkResolve('loss')}
                 className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded-xl hover:bg-red-700"
               >
-                Approve as Loss
+                Set as Loss
               </button>
             </div>
           )}
@@ -412,7 +414,16 @@ const TradesManagement: React.FC = () => {
                         {new Date(trade.createdAt).toLocaleString()}
                       </td>
                       <td className="px-4 py-4 space-x-2 text-right md:px-6">
-                        {trade.canResolve ? (
+                        {trade.adminOutcome ? (
+                          <div className="flex flex-col items-end">
+                            <span className={`px-2 py-1 text-xs font-bold rounded ${trade.adminOutcome === 'win' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              Admin: {trade.adminOutcome.toUpperCase()}
+                            </span>
+                            <span className="text-[10px] text-gray-400 font-bold">
+                              Selected {new Date(trade.adminSelectedAt!).toLocaleString()}
+                            </span>
+                          </div>
+                        ) : trade.canResolve ? (
                           <>
                             <button
                               onClick={() => handleResolveTrade(trade.assetId, trade.userId, 'win')}

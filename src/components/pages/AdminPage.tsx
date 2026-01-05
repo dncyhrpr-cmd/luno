@@ -288,7 +288,8 @@ const AdminPage: React.FC = () => {
               month: 'short',
               day: 'numeric',
               year: 'numeric'
-            }).toUpperCase() : 'Unknown'
+            }).toUpperCase() : 'Unknown',
+            clientScore: user.clientScore || null
           };
         }).filter((u: any) => u.id);
 
@@ -529,30 +530,43 @@ const AdminPage: React.FC = () => {
   };
 
   const handleSetScore = async (userId: string) => {
-    const scoreInput = prompt('Enter client score (0-100):');
+    const scoreInput = prompt('Enter score adjustment (+ or - value, e.g., +10 or -5):');
     if (scoreInput === null) return;
-    const score = parseInt(scoreInput);
-    if (isNaN(score) || score < 0 || score > 100) {
-      alert('Invalid score. Must be a number between 0 and 100.');
+    const adjustment = parseInt(scoreInput);
+    if (isNaN(adjustment)) {
+      alert('Invalid adjustment. Must be a number.');
       return;
     }
 
+    // Get current score to calculate new score
+    const currentUser = users.find(u => u.id === userId);
+    const currentScore = currentUser?.clientScore || 0;
+    const newScore = Math.max(0, Math.min(100, currentScore + adjustment));
+
+    if (newScore === currentScore) {
+      alert('No change in score.');
+      return;
+    }
+
+    console.log('DEBUG: Sending score update', { userId, newScore });
     try {
       const res = await authFetch('/api/admin/users', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ userId, score })
+        body: JSON.stringify({ userId, score: newScore })
       });
 
+      console.log('DEBUG: API response', res);
       if (res.ok) {
+        console.log('DEBUG: Score update successful');
         // Update local state
-        setUsers(users.map(u => u.id === userId ? { ...u, clientScore: score } : u));
+        setUsers(users.map(u => u.id === userId ? { ...u, clientScore: newScore } : u));
         if (selectedUser && selectedUser.id === userId) {
-          setSelectedUser({ ...selectedUser, clientScore: score });
+          setSelectedUser({ ...selectedUser, clientScore: newScore });
         }
-        alert(`Client score set to ${score}`);
+        alert(`Client score adjusted to ${newScore}`);
       } else {
         alert('Failed to update client score');
       }

@@ -49,23 +49,31 @@ export async function POST(request: NextRequest) {
                 const userDoc = await collections.users.doc(order.userId).get();
                 const userData = userDoc.data();
 
-                // Get current price from Binance API
-                const currentPrice = await getCurrentPrice(order.symbol);
-
-                if (!currentPrice) {
-                    structuredLog('WARN', reqId, `Could not get current price for ${order.symbol}, skipping order ${order.id}`);
-                    continue;
-                }
-
-                // Determine outcome based on direction and price movement
+                // Check if admin has already selected outcome
                 let outcome: 'win' | 'loss';
-                if (order.direction === 'UP') {
-                    outcome = currentPrice > order.entryPrice ? 'win' : 'loss';
-                } else if (order.direction === 'DOWN') {
-                    outcome = currentPrice < order.entryPrice ? 'win' : 'loss';
+                let isAdminSelected = !!order.adminOutcome;
+                let currentPrice = null;
+
+                if (isAdminSelected) {
+                    outcome = order.adminOutcome;
                 } else {
-                    structuredLog('WARN', reqId, `Invalid direction for order ${order.id}: ${order.direction}`);
-                    continue;
+                    // Get current price from Binance API
+                    currentPrice = await getCurrentPrice(order.symbol);
+
+                    if (!currentPrice) {
+                        structuredLog('WARN', reqId, `Could not get current price for ${order.symbol}, skipping order ${order.id}`);
+                        continue;
+                    }
+
+                    // Determine outcome based on direction and price movement
+                    if (order.direction === 'UP') {
+                        outcome = currentPrice > order.entryPrice ? 'win' : 'loss';
+                    } else if (order.direction === 'DOWN') {
+                        outcome = currentPrice < order.entryPrice ? 'win' : 'loss';
+                    } else {
+                        structuredLog('WARN', reqId, `Invalid direction for order ${order.id}: ${order.direction}`);
+                        continue;
+                    }
                 }
 
                 // Calculate PnL - for win, return stake + profit; for loss, deduct stake
@@ -89,7 +97,7 @@ export async function POST(request: NextRequest) {
                             result: outcome,
                             pnl: pnl,
                             resolvedAt: now,
-                            resolvedBy: 'auto', // Mark as auto-resolved
+                            resolvedBy: isAdminSelected ? 'admin' : 'auto',
                             updatedAt: now
                         });
 
@@ -107,7 +115,7 @@ export async function POST(request: NextRequest) {
                             userId: order.userId,
                             type: 'binary_payout',
                             amount: pnl,
-                            description: `Auto-resolved binary trade ${outcome}: ${order.symbol} ${order.direction}`,
+                            description: `${isAdminSelected ? 'Admin' : 'Auto'}-resolved binary trade ${outcome}: ${order.symbol} ${order.direction}`,
                             status: 'completed',
                             balanceBefore,
                             balanceAfter,
@@ -126,11 +134,13 @@ export async function POST(request: NextRequest) {
                     }
 
                     // Create notification
+                    const title = isAdminSelected ? 'Trade Resolved by Admin' : 'Trade Auto-Resolved';
+                    const type = isAdminSelected ? 'trade_resolved_admin' : 'trade_resolved';
                     await collections.alerts.add({
                         userId: order.userId,
-                        type: 'trade_resolved',
-                        title: 'Trade Auto-Resolved',
-                        message: `Hi ${userData?.email}, your binary trade has been auto-resolved as ${outcome}. ${outcome === 'win' ? `You won ${pnl.toFixed(2)} (including your stake)!` : `You lost ${Math.abs(pnl).toFixed(2)}.`}`,
+                        type: type,
+                        title: title,
+                        message: `Hi ${userData?.email}, your binary trade has been ${isAdminSelected ? 'resolved by admin' : 'auto-resolved'} as ${outcome}. ${outcome === 'win' ? `You won ${pnl.toFixed(2)} (including your stake)!` : `You lost ${Math.abs(pnl).toFixed(2)}.`}`,
                         read: false,
                         createdAt: now
                     });
@@ -149,7 +159,7 @@ export async function POST(request: NextRequest) {
                     outcome,
                     pnl,
                     entryPrice: order.entryPrice,
-                    currentPrice
+                    currentPrice: isAdminSelected ? null : currentPrice
                 });
 
                 resolvedCount++;

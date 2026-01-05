@@ -14,24 +14,6 @@ export async function GET(request: NextRequest) {
     const payload = await verifyAccessToken(token);
     const userId = payload.userId;
 
-    // Temporary dev mode bypass
-    if (process.env.NODE_ENV === 'development') {
-      return NextResponse.json({
-        profile: {
-          id: 'dev-user',
-          username: 'devuser',
-          email: 'dev@example.com',
-          balance: 10000,
-          role: 'trader',
-          status: 'active',
-          lastLogin: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-          kycStatus: 'unsubmitted',
-          clientScore: 50
-        }
-      });
-    }
-
     const userDoc = await collections.users.doc(userId).get();
 
     if (!userDoc.exists) {
@@ -44,7 +26,7 @@ export async function GET(request: NextRequest) {
     const kycQuery = await collections.kycData.where('userId', '==', userId).limit(1).get();
     const kycData = kycQuery.empty ? null : kycQuery.docs[0].data();
 
-    // Calculate tier based on clientScore
+    // Calculate tier based on score
     const clientScore = user.clientScore || 0;
     let tier = 'Bronze';
     if (clientScore >= 90) tier = 'Platinum';
@@ -85,6 +67,7 @@ export async function GET(request: NextRequest) {
       securityScore: Math.min(securityScore, 100) // Max 100
     };
 
+    console.log('DEBUG: Profile API - user.clientScore:', user.clientScore, 'hasOwnProperty clientScore:', user.hasOwnProperty('clientScore'), 'for user', userId);
     return NextResponse.json({ profile });
   } catch (error: any) {
     if (error.name === 'JWTExpired' || error.name === 'JWSInvalid') {

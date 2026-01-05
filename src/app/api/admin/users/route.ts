@@ -108,6 +108,7 @@ export async function PUT(request: NextRequest) {
 
     try {
         const { userId, status, score } = await request.json();
+        console.log('DEBUG: Admin users PUT received:', { userId, status, score });
 
         if (!userId) {
             structuredLog('WARN', reqId, 'Missing userId for user update', { status: 400 });
@@ -126,15 +127,30 @@ export async function PUT(request: NextRequest) {
 
         structuredLog('INFO', reqId, 'Updating user', { adminId: adminPayload.userId, userId, status, score });
 
+        // Check if user exists
+        const userDoc = await collections.users.doc(userId).get();
+        if (!userDoc.exists) {
+            structuredLog('WARN', reqId, 'User not found for update', { userId, status: 404 });
+            return NextResponse.json({ error: 'User not found', correlationId: reqId }, { status: 404 });
+        }
+
+        console.log('DEBUG: User exists, current data:', userDoc.data());
+
         // Prepare update object
         const updateData: any = { updatedAt: admin.firestore.Timestamp.now() };
         if (status) updateData.status = status;
         if (score !== undefined) updateData.clientScore = score;
 
         // Update user
-        console.log('Updating user', userId, 'with data:', updateData);
-        await collections.users.doc(userId).update(updateData);
-        console.log('User updated successfully');
+        console.log('DEBUG: Updating user', userId, 'with data:', updateData);
+        const updateResult = await collections.users.doc(userId).update(updateData);
+        console.log('DEBUG: Update result:', updateResult);
+        console.log('DEBUG: User updated successfully, fetching to verify...');
+
+        // Verify the update
+        const updatedDoc = await collections.users.doc(userId).get();
+        const updatedData = updatedDoc.data();
+        console.log('DEBUG: Updated user data:', { id: updatedDoc.id, clientScore: updatedData?.clientScore, status: updatedData?.status });
 
         // Clear cache to ensure updated data is fetched
         adminUsersCache.flushAll();
