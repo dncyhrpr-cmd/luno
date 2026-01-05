@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
 
     // Fetch top 250 coins by market cap from CoinGecko
     const markets = await coinGeckoAPI.getCoinsMarkets([], 'usd', 250);
+    console.log('CoinGecko markets fetched:', markets.length);
 
     // Filter to only coins available on Binance
     const filteredMarkets = markets.filter(market => binanceSymbolsSet.has(market.symbol.toLowerCase()));
