@@ -26,6 +26,13 @@ function generateSyntheticKlines(symbol: string, interval: string, limit: number
     if (symbol.includes('LTC')) basePrice = 85;
     if (symbol.includes('MATIC')) basePrice = 0.40;
     if (symbol.includes('LINK')) basePrice = 15.0;
+    if (symbol.includes('DOT')) basePrice = 6.5;
+    if (symbol.includes('VET')) basePrice = 0.03;
+    if (symbol.includes('EOS')) basePrice = 0.8;
+    if (symbol.includes('TRX')) basePrice = 0.15;
+    if (symbol.includes('BCH')) basePrice = 400;
+    if (symbol.includes('XLM')) basePrice = 0.1;
+    if (symbol.includes('BTS')) basePrice = 0.002;
 
     // If anchorPrice is provided, use it as the starting point for the LATEST candle
     // and generate backwards.
