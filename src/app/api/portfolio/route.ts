@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { collections } from '@/lib/db';
 import { getRequestId, handleApiError, structuredLog } from '@/lib/correlation';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
+import { coinGeckoAPI } from '@/lib/coingecko-api';
 import admin from 'firebase-admin';
 
 // GET - Fetch user's complete portfolio: balance and assets
@@ -36,16 +37,32 @@ export async function GET(request: NextRequest) {
     const user = userDoc.data()!;
     const assets = assetsQuery.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
-    // In a real-world scenario, you might enrich asset data with real-time prices here
-    // For now, we use the stored average price.
+    // Fetch INR to USDT rate for conversion
+    const rate = await coinGeckoAPI.getInrToUsdtRate();
 
-    const totalAssetValue = assets.reduce((sum: number, asset: any) => {
-      if (asset.type === 'binary') {
-        return sum + asset.quantity;
-      } else {
-        return sum + (asset.quantity * asset.averagePrice);
-      }
-    }, 0);
+    // In a real-world scenario, you might enrich asset data with real-time prices here
+    // For now, we use the stored average price and convert to INR
+
+    let totalAssetValue = 0;
+    if (rate) {
+      totalAssetValue = assets.reduce((sum: number, asset: any) => {
+        if (asset.type === 'binary') {
+          return sum + asset.quantity;
+        } else {
+          const valueUsdt = asset.quantity * asset.averagePrice;
+          return sum + (valueUsdt * rate);
+        }
+      }, 0);
+    } else {
+      // Fallback: assume averagePrice is in INR for compatibility
+      totalAssetValue = assets.reduce((sum: number, asset: any) => {
+        if (asset.type === 'binary') {
+          return sum + asset.quantity;
+        } else {
+          return sum + (asset.quantity * asset.averagePrice);
+        }
+      }, 0);
+    }
     const totalPortfolioValue = user.balance + totalAssetValue;
 
     structuredLog('INFO', reqId, 'Successfully fetched portfolio', { userId, status: 200, assetCount: assets.length });

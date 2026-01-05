@@ -90,6 +90,46 @@ class CoinGeckoAPI {
       return null;
     }
   }
+
+  /**
+   * Get exchange rates (normalized to BTC as 1)
+   */
+  async getExchangeRates(): Promise<any> {
+    const cacheKey = 'exchange_rates';
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/exchange_rates`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch exchange rates: ${response.status}`);
+      }
+      const data = await response.json();
+      this.cache.set(cacheKey, data);
+      return data;
+    } catch (error: any) {
+      console.error('Error fetching exchange rates:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get INR to USDT exchange rate (USDT approximated as USD)
+   */
+  async getInrToUsdtRate(): Promise<number | null> {
+    const rates = await this.getExchangeRates();
+    if (!rates || !rates.rates) return null;
+
+    const inrRate = rates.rates.inr?.value;
+    const usdRate = rates.rates.usd?.value;
+
+    if (!inrRate || !usdRate) return null;
+
+    // Since all rates are relative to BTC=1, INR/USD = inrRate / usdRate
+    return inrRate / usdRate;
+  }
 }
 
 // Export singleton instance

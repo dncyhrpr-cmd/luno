@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { collections } from '@/lib/db';
 import { extractTokenFromRequest, verifyAccessToken } from '@/lib/auth-utils';
+import { coinGeckoAPI } from '@/lib/coingecko-api';
 import admin from 'firebase-admin';
 
 
@@ -230,6 +231,49 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
+    const userData = userDoc.data()!;
+    const currentBalance = userData.balance || 0;
+    let costInr = 0;
+    let rate: number | null = null;
+    let costUsdt = 0;
+
+    if (type === 'buy') {
+      if (orderType === 'limit' && price) {
+        costUsdt = price * quantity;
+      } else if (orderType === 'market') {
+        // Fetch current price
+        try {
+          const symbolUsdt = symbol.toUpperCase() + 'USDT';
+          const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${symbolUsdt}`);
+          if (response.ok) {
+            const data = await response.json();
+            const currentPrice = parseFloat(data.price);
+            costUsdt = currentPrice * quantity;
+          } else {
+            return NextResponse.json({ error: 'Unable to fetch current price for market order' }, { status: 400 });
+          }
+        } catch (err) {
+          return NextResponse.json({ error: 'Unable to fetch current price' }, { status: 500 });
+        }
+      }
+
+      const fetchedRate = await coinGeckoAPI.getInrToUsdtRate();
+      if (fetchedRate === null) {
+        return NextResponse.json({ error: 'Unable to fetch exchange rate' }, { status: 500 });
+      }
+      rate = fetchedRate;
+
+      costInr = costUsdt * rate;
+      if (currentBalance < costInr) {
+        return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
+      }
+
+      // Deduct balance
+      await collections.users.doc(userId).update({
+        balance: admin.firestore.FieldValue.increment(-costInr)
+      });
+    }
+
     const scheduledOrderRef = await collections.scheduledOrders.add({
       userId,
       symbol: symbol.toUpperCase(),
@@ -255,6 +299,38 @@ export async function POST(request: NextRequest) {
       triggerCondition,
       status: 'pending'
     };
+
+    if (type === 'buy') {
+      await collections.transactionHistory.add({
+        userId,
+        type: 'buy',
+        amount: costInr,
+        symbol: symbol.toUpperCase(),
+        quantity,
+        price: price || (costUsdt / quantity),
+        description: `Scheduled buy order for ${quantity} ${symbol.toUpperCase()}`,
+        status: 'completed',
+        balanceBefore: currentBalance,
+        balanceAfter: currentBalance - costInr,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      await collections.auditLogs.add({
+        userId,
+        action: 'currency_conversion',
+        resourceType: 'scheduled_order',
+        resourceId: scheduledOrder.id,
+        changes: {
+          from: 'USDT',
+          to: 'INR',
+          amountUsdt: costUsdt,
+          amountInr: costInr,
+          rate
+        },
+        status: 'success',
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    }
 
     await collections.auditLogs.add({
       userId,
