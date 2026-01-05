@@ -1,6 +1,4 @@
 const admin = require('firebase-admin');
-const { collections } = require('../../../src/lib/db');
-const { binanceAPI } = require('../../../src/lib/binance-api');
 
 // Initialize Firebase if not already
 if (!admin.apps.length) {
@@ -12,6 +10,34 @@ if (!admin.apps.length) {
         }),
         databaseURL: `https://${process.env.FIREBASE_PROJECT_ID}.firebaseio.com`,
     });
+}
+
+const db = admin.firestore();
+const collections = {
+    users: db.collection('users'),
+    orders: db.collection('orders'),
+    assets: db.collection('assets'),
+    transactionHistory: db.collection('transaction_history'),
+    kycData: db.collection('kyc_data'),
+    alerts: db.collection('alerts'),
+};
+
+// Helper function to get current price using Binance API
+async function getCurrentPrice(symbol) {
+    try {
+        const binanceSymbol = symbol.includes('USDT') ? symbol : `${symbol}USDT`;
+        const url = `https://api.binance.com/api/v3/ticker/price?symbol=${binanceSymbol}`;
+        
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch price: ${response.status}`);
+        }
+        const data = await response.json();
+        return parseFloat(data.price);
+    } catch (error) {
+        console.error('Error fetching current price from Binance:', error);
+        return null;
+    }
 }
 
 exports.handler = async (event, context) => {
@@ -175,18 +201,3 @@ exports.handler = async (event, context) => {
         };
     }
 };
-
-// Helper function to get current price using Binance API
-async function getCurrentPrice(symbol) {
-    try {
-        const binanceSymbol = symbol.includes('USDT') ? symbol : `${symbol}USDT`;
-        const prices = await binanceAPI.getPrices([binanceSymbol]);
-        if (prices.length > 0) {
-            return prices[0].price;
-        }
-        return null;
-    } catch (error) {
-        console.error('Error fetching current price from Binance:', error);
-        return null;
-    }
-}

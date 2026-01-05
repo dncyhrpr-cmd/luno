@@ -1,5 +1,4 @@
 const admin = require('firebase-admin');
-const { collections } = require('../../../src/lib/db');
 
 // Initialize Firebase if not already
 if (!admin.apps.length) {
@@ -12,6 +11,16 @@ if (!admin.apps.length) {
         databaseURL: `https://${process.env.FIREBASE_PROJECT_ID}.firebaseio.com`,
     });
 }
+
+const db = admin.firestore();
+const collections = {
+    users: db.collection('users'),
+    orders: db.collection('orders'),
+    assets: db.collection('assets'),
+    transactionHistory: db.collection('transaction_history'),
+    kycData: db.collection('kyc_data'),
+    alerts: db.collection('alerts'),
+};
 
 exports.handler = async (event, context) => {
     console.log('Starting scheduled deletion of old resolved trades');
