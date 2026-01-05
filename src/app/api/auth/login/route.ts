@@ -40,11 +40,23 @@ export async function POST(request: NextRequest) {
 
     const normalizedEmail = email.toLowerCase().trim();
 
+    // Check if Firebase environment variables are set
+    if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_PRIVATE_KEY || !process.env.FIREBASE_CLIENT_EMAIL) {
+      console.error('Firebase environment variables not set');
+      return createCORSResponse({ error: 'Server configuration error' }, 500);
+    }
+
     // Lazy import to avoid webpack issues
     const { collections } = await import('@/lib/db');
 
-    // Fetch user from Firestore by email
-    const userSnapshot = await collections.users.where('email', '==', normalizedEmail).get();
+    let userSnapshot;
+    try {
+      // Fetch user from Firestore by email
+      userSnapshot = await collections.users.where('email', '==', normalizedEmail).get();
+    } catch (dbError: any) {
+      console.error('Database query error:', dbError);
+      return createCORSResponse({ error: 'Database connection failed' }, 500);
+    }
     const user = !userSnapshot.empty ? { id: userSnapshot.docs[0].id, ...userSnapshot.docs[0].data() } as any : null;
 
     if (!user) {
@@ -90,11 +102,17 @@ export async function POST(request: NextRequest) {
 
     console.log('User roles parsed:', userRoles);
 
-    const tokens = await generateAuthTokens({
-      id: user.id,
-      roles: JSON.stringify(userRoles),
-      migrationStatus: user.migrationStatus as any,
-    });
+    let tokens;
+    try {
+      tokens = await generateAuthTokens({
+        id: user.id,
+        roles: JSON.stringify(userRoles),
+        migrationStatus: user.migrationStatus as any,
+      });
+    } catch (tokenError: any) {
+      console.error('Token generation error:', tokenError);
+      return createCORSResponse({ error: 'Token generation failed' }, 500);
+    }
 
     console.log('Generated tokens for user:', user.id, 'roles:', userRoles);
 
