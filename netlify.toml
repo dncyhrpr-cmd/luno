@@ -22,12 +22,13 @@
 # NEXT_PUBLIC_FIREBASE_APP_ID
 # NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 
+[functions]
+  directory = "netlify/functions"
+
 [functions.resolve-binary-trades]
-  directory = "netlify/functions/resolve-binary-trades"
   schedule = "@every 30s"
 
 [functions.delete-old-resolved-trades]
-  directory = "netlify/functions/delete-old-resolved-trades"
   schedule = "@every 30s"
 
 [[plugins]]
