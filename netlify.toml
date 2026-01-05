@@ -32,10 +32,10 @@
   directory = "netlify/functions"
 
 [functions.resolve-binary-trades]
-  schedule = "@every 30s"
+  schedule = "* * * * *"
 
 [functions.delete-old-resolved-trades]
-  schedule = "@every 30s"
+  schedule = "0 0 * * *"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
