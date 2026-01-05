@@ -159,4 +159,12 @@ export const collections = {
       throw error;
     }
   },
+  get freezeHistory() {
+    try {
+      return getDb().collection('freeze_history');
+    } catch (error) {
+      console.error('Failed to get freezeHistory collection:', error);
+      throw error;
+    }
+  },
 };

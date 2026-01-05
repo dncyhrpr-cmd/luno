@@ -37,6 +37,10 @@ export async function GET(request: NextRequest) {
     const user = userDoc.data()!;
     const assets = assetsQuery.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
 
+    const totalBalance = user.balance || 0;
+    const frozenBalance = user.frozenBalance || 0;
+    const availableBalance = totalBalance - frozenBalance;
+
     // Fetch INR to USDT rate for conversion
     const rate = await coinGeckoAPI.getInrToUsdtRate();
 
@@ -63,12 +67,14 @@ export async function GET(request: NextRequest) {
         }
       }, 0);
     }
-    const totalPortfolioValue = user.balance + totalAssetValue;
+    const totalPortfolioValue = availableBalance + totalAssetValue;
 
     structuredLog('INFO', reqId, 'Successfully fetched portfolio', { userId, status: 200, assetCount: assets.length });
 
     return NextResponse.json({
-      balance: user.balance,
+      balance: availableBalance,
+      frozenBalance: frozenBalance,
+      totalBalance: totalBalance,
       assets,
       totalPortfolioValue,
       correlationId: reqId
@@ -115,17 +121,19 @@ export async function POST(request: NextRequest) {
     }
 
     const user = userDoc.data()!;
+    const totalBalance = user.balance || 0;
+    const frozenBalance = user.frozenBalance || 0;
+    const availableBalance = totalBalance - frozenBalance;
     let newBalance;
-    const balanceBefore = user.balance;
 
     if (type === 'deposit') {
-      newBalance = balanceBefore + amount;
+      newBalance = totalBalance + amount;
     } else { // withdraw
-      if (balanceBefore < amount) {
-        structuredLog('WARN', reqId, 'Insufficient balance for withdrawal', { userId, balance: balanceBefore, amount, status: 400 });
-        return NextResponse.json({ error: 'Insufficient balance', correlationId: reqId }, { status: 400 });
+      if (availableBalance < amount) {
+        structuredLog('WARN', reqId, 'Insufficient available balance for withdrawal', { userId, availableBalance, amount, status: 400 });
+        return NextResponse.json({ error: 'Insufficient available balance', correlationId: reqId }, { status: 400 });
       }
-      newBalance = balanceBefore - amount;
+      newBalance = totalBalance - amount;
     }
 
     // --- Database Operations ---
@@ -138,7 +146,7 @@ export async function POST(request: NextRequest) {
         amount,
         description: `${type.charAt(0).toUpperCase() + type.slice(1)} of ${amount.toFixed(2)}`,
         status: 'completed',
-        balanceBefore,
+        balanceBefore: totalBalance,
         balanceAfter: newBalance,
         createdAt: admin.firestore.FieldValue.serverTimestamp()
     });

@@ -29,6 +29,8 @@ interface ClientUser {
   name: string;
   email: string;
   balance: number;
+  availableBalance: number;
+  frozenBalance: number;
   assets: Asset[];
   totalWithdrawn: number;
   totalDeposited: number;
@@ -278,6 +280,8 @@ const AdminPage: React.FC = () => {
             name: user.username,
             email: user.email,
             balance: user.balance || 0,
+            availableBalance: user.availableBalance || user.balance,
+            frozenBalance: user.frozenBalance || 0,
             assets,
             totalWithdrawn,
             totalDeposited,
@@ -575,6 +579,43 @@ const AdminPage: React.FC = () => {
     }
   };
 
+  const handleFreeze = async (userId: string, action: 'freeze' | 'unfreeze') => {
+    const amountInput = prompt(`Enter amount to ${action}:`);
+    if (amountInput === null) return;
+    const amount = parseFloat(amountInput);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Invalid amount. Must be a positive number.');
+      return;
+    }
+    const reason = prompt('Enter reason (optional):') || '';
+    try {
+      const response = await authFetch('/api/admin/freeze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, action, amount, reason })
+      });
+
+      if (response.ok) {
+        const data = response.data;
+        // Update users list with new frozen balance
+        setUsers(users.map(u =>
+          u.id === userId ? { ...u, frozenBalance: data.newFrozenBalance, availableBalance: u.balance - data.newFrozenBalance } : u
+        ));
+        // Update selectedUser if open
+        if (selectedUser && selectedUser.id === userId) {
+          setSelectedUser({ ...selectedUser, frozenBalance: data.newFrozenBalance, availableBalance: selectedUser.balance - data.newFrozenBalance });
+        }
+        alert(`Balance ${action}d successfully`);
+      } else {
+        alert(`Failed to ${action} balance: ${response.error}`);
+      }
+    } catch (error) {
+      alert(`Error ${action}ing balance`);
+    }
+  };
+
   return (
     <ProtectedRoute requiredRole="admin">
       <div className="min-h-screen bg-[#f8f9fc] dark:bg-[#0a0c10] p-6 md:p-12">
@@ -710,6 +751,18 @@ const AdminPage: React.FC = () => {
                               className="px-4 md:px-6 py-2.5 bg-blue-100 dark:bg-blue-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all mb-2"
                             >
                               Set Score
+                            </button>
+                            <button
+                              onClick={() => handleFreeze(user.id, 'freeze')}
+                              className="px-4 md:px-6 py-2.5 bg-purple-100 dark:bg-purple-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-purple-600 hover:text-white transition-all mb-2"
+                            >
+                              Freeze
+                            </button>
+                            <button
+                              onClick={() => handleFreeze(user.id, 'unfreeze')}
+                              className="px-4 md:px-6 py-2.5 bg-green-100 dark:bg-green-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 hover:text-white transition-all mb-2"
+                            >
+                              Unfreeze
                             </button>
                             <button className="px-4 md:px-6 py-2.5 bg-gray-100 dark:bg-gray-700 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all">
                               Manage Profile

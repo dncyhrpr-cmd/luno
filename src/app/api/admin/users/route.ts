@@ -47,10 +47,23 @@ export async function GET(request: NextRequest) {
         const endIndex = startIndex + limit;
         const paginatedUsers = usersWithDetails.slice(startIndex, endIndex);
 
+        // Add balance calculations to all users
+        const usersWithBalances = usersWithDetails.map((user: any) => {
+            const totalBalance = user.balance || 0;
+            const frozenBalance = user.frozenBalance || 0;
+            const availableBalance = totalBalance - frozenBalance;
+            return {
+                ...user,
+                totalBalance,
+                availableBalance,
+                frozenBalance
+            };
+        });
+
         // If includeDetails, fetch related data
-        let users = paginatedUsers;
+        let users = usersWithBalances.slice(startIndex, endIndex);
         if (includeDetails) {
-            users = await Promise.all(paginatedUsers.map(async (user: any) => {
+            users = await Promise.all(usersWithBalances.slice(startIndex, endIndex).map(async (user: any) => {
                 // Fetch assets
                 const assetsSnapshot = await collections.assets.where('userId', '==', user.id).get();
                 const assets = assetsSnapshot.docs.map((doc: admin.firestore.DocumentSnapshot) => ({ id: doc.id, ...doc.data() }));
@@ -70,6 +83,8 @@ export async function GET(request: NextRequest) {
                     transactionHistory
                 };
             }));
+        } else {
+            users = usersWithBalances.slice(startIndex, endIndex);
         }
 
         const responseData = {

@@ -83,11 +83,18 @@ async function handleApprove(request: any, adminId: string) {
   // 1. Get user and update balance
   const userDoc = await collections.users.doc(request.userId).get();
   const userData = userDoc.data();
+  const totalBalance = userData!.balance || 0;
+  const frozenBalance = userData!.frozenBalance || 0;
+  const availableBalance = totalBalance - frozenBalance;
   const balanceChange = request.type === 'deposit' ? request.amount : -request.amount;
 
   // Check sufficient balance for withdrawal
-  if (request.type === 'withdraw' && userData!.balance < request.amount) {
-    throw new Error('Insufficient balance');
+  if (request.type === 'withdraw') {
+    if (availableBalance === 0) {
+      throw new Error('Account balance is zero');
+    } else if (availableBalance < request.amount) {
+      throw new Error('Requested withdrawal amount exceeds the available balance');
+    }
   }
 
   const newBalance = userData!.balance + balanceChange;

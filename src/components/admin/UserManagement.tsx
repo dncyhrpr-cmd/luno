@@ -34,6 +34,9 @@ interface User {
     role: string;
     status: 'active' | 'inactive' | 'banned';
     balance: number;
+    totalBalance: number;
+    availableBalance: number;
+    frozenBalance: number;
     createdAt: any;
     clientScore: number | null;
 }
@@ -128,6 +131,43 @@ const UserManagement: React.FC = () => {
         }
     }, [user]);
 
+    const handleFreeze = useCallback(async (userId: string, action: 'freeze' | 'unfreeze') => {
+        if (!user || !user.accessToken) return;
+        const amountInput = prompt(`Enter amount to ${action}:`);
+        if (amountInput === null) return;
+        const amount = parseFloat(amountInput);
+        if (isNaN(amount) || amount <= 0) {
+            alert('Invalid amount. Must be a positive number.');
+            return;
+        }
+        const reason = prompt('Enter reason (optional):') || '';
+        try {
+            const response = await fetch('/api/admin/freeze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${user.accessToken}`
+                },
+                body: JSON.stringify({ userId, action, amount, reason })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setUsers(prevUsers =>
+                    prevUsers.map(u =>
+                        u.id === userId ? { ...u, frozenBalance: data.newFrozenBalance, availableBalance: u.totalBalance - data.newFrozenBalance } : u
+                    )
+                );
+                alert(`Balance ${action}d successfully`);
+            } else {
+                const error = await response.json();
+                alert(`Failed to ${action} balance: ${error.error}`);
+            }
+        } catch (error: any) {
+            alert(`Error ${action}ing balance`);
+        }
+    }, [user]);
+
     if (isLoading) {
         return <p>Loading users...</p>;
     }
@@ -199,6 +239,18 @@ const UserManagement: React.FC = () => {
                                             className="text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300"
                                         >
                                             Set Score
+                                        </button>
+                                        <button
+                                          onClick={() => handleFreeze(user.id, 'freeze')}
+                                          className="mr-3 text-purple-600 dark:text-purple-400 hover:text-purple-900 dark:hover:text-purple-300"
+                                        >
+                                          Freeze
+                                        </button>
+                                        <button
+                                          onClick={() => handleFreeze(user.id, 'unfreeze')}
+                                          className="text-green-600 dark:text-green-400 hover:text-green-900 dark:hover:text-green-300"
+                                        >
+                                          Unfreeze
                                         </button>
                                     </td>
                                 </tr>

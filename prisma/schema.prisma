@@ -17,6 +17,7 @@ model User {
   password          String?
   role              String   @default("user")
   balance           Float    @default(0)
+  frozenBalance     Float    @default(0)
   twoFactorEnabled  Boolean  @default(false)
   twoFactorSecret   String?
   backupCodes       String?
@@ -33,6 +34,7 @@ model User {
   alerts            Alert[]
   transactionRequests TransactionRequest[]
   transactionHistory TransactionHistory[]
+  freezeHistory     FreezeHistory[]
   kycData           KYCData?
   auditLogs         AuditLog[]
   twoFactorAuth     TwoFactorAuth?
@@ -321,4 +323,21 @@ model Message {
   chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
   @@map("messages")
+}
+
+model FreezeHistory {
+  id          String   @id @default(cuid())
+  userId      String
+  adminId     String
+  action      String   // freeze | unfreeze
+  amount      Float
+  reason      String?
+  frozenBefore Float
+  frozenAfter  Float
+  createdAt   DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("freeze_history")
 }

@@ -18,6 +18,8 @@ interface Asset {
 
 interface PortfolioData {
   balance: number;
+  frozenBalance: number;
+  totalBalance: number;
   assets: Asset[];
 }
 
@@ -181,6 +183,8 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
   const stats = useMemo(() => {
     if (!portfolio) return { total: 0, pnl: 0, pnlPct: 0 };
     const balance = portfolio.balance || 0;
+    const frozenBalance = portfolio.frozenBalance || 0;
+    const totalBalance = portfolio.totalBalance || 0;
     const totalAssets = portfolio.assets.reduce((sum, a) => {
       if (a.type === 'binary') {
         return sum + a.quantity;
@@ -196,13 +200,16 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
         return sum + (a.quantity * a.averagePrice);
       }
     }, 0);
-    const totalValue = totalAssets + balance;
+    const totalValue = totalAssets + totalBalance;
     const pnl = totalAssets - totalCost;
     return {
         total: totalValue,
         pnl,
         pnlPct: totalCost > 0 ? (pnl / totalCost) * 100 : 0,
-        assetRatio: totalValue > 0 ? (totalAssets / totalValue) * 100 : 0
+        assetRatio: totalValue > 0 ? (totalAssets / totalValue) * 100 : 0,
+        availableBalance: balance,
+        frozenBalance: frozenBalance,
+        totalBalance: totalBalance
     };
   }, [portfolio, wsPrices]);
 
@@ -340,7 +347,7 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
               <div className="grid grid-cols-2 gap-4 py-4 border-gray-100 border-y dark:border-gray-700">
                 <div>
                   <div className="text-xs text-gray-500">Available USD</div>
-                  <div className="text-lg font-bold dark:text-white">${(portfolio?.balance || 0).toLocaleString()}</div>
+                  <div className="text-lg font-bold dark:text-white">${(stats.availableBalance || 0).toLocaleString()}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-gray-500">Total P&L</div>
@@ -362,6 +369,15 @@ const AssetsPage: React.FC<{ user: User | null }> = ({ user }) => {
             </div>
           </Card>
           
+          {(stats.frozenBalance || 0) > 0 && (
+            <Card title="Frozen Balance" className="border-orange-200 bg-orange-50/50 dark:bg-orange-900/10 dark:border-orange-900/30">
+              <div className="py-4 text-center">
+                <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">${(stats.frozenBalance || 0).toLocaleString()}</div>
+                <p className="text-xs text-orange-700 dark:text-orange-300">Amount currently frozen by administrator</p>
+              </div>
+            </Card>
+          )}
+
           <div className="p-4 border border-blue-100 rounded-2xl bg-blue-50/50 dark:bg-blue-900/10 dark:border-blue-900/30">
             <div className="flex gap-3">
               <Info className="text-blue-500 shrink-0" size={20} />

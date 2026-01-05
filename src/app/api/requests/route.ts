@@ -64,6 +64,21 @@ export async function POST(request: NextRequest) {
       if (!bankName || !holderName || !accountNumber || !ifscCode) {
         return NextResponse.json({ error: 'Bank details required for withdrawal' }, { status: 400 });
       }
+
+      // Check sufficient balance for withdrawal
+      const userDoc = await collections.users.doc(userId).get();
+      if (!userDoc.exists) {
+        return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      }
+      const userData = userDoc.data()!;
+      const totalBalance = userData.balance || 0;
+      const frozenBalance = userData.frozenBalance || 0;
+      const availableBalance = totalBalance - frozenBalance;
+      if (availableBalance === 0) {
+        return NextResponse.json({ error: 'Account balance is zero' }, { status: 400 });
+      } else if (availableBalance < amount) {
+        return NextResponse.json({ error: 'Requested withdrawal amount exceeds the available balance' }, { status: 400 });
+      }
     }
 
     const requestRef = await collections.requests.add({
