@@ -76,7 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string): Promise<string | null> => {
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || '';
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
@@ -101,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signup = useCallback(async (name: string, email: string, password: string): Promise<string | null> => {
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || '';
       const signupResponse = await fetch(`${baseUrl}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -135,7 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || '';
       const response = await fetch(`${baseUrl}/api/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -166,7 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const storedRefreshToken = localStorage.getItem('refreshToken');
       if (storedToken) {
         try {
-          const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+          const baseUrl = process.env.NEXT_PUBLIC_API_URL || '';
           const response = await fetch(`${baseUrl}/api/auth/session`, {
             method: 'POST',
             headers: {

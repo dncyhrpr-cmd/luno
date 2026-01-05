@@ -297,7 +297,7 @@ export default function App({ onNavigate }: HomePageProps) {
     // Fetch initial crypto data from /api/coins
     const fetchCryptoData = useCallback(async () => {
         try {
-            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || '';
             const response = await fetch(`${baseUrl}/api/coins`);
             if (!response.ok) {
                 throw new Error('Failed to fetch coins');
