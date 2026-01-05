@@ -29,7 +29,20 @@ export async function GET(request: NextRequest) {
       const mockCoins = [
         { id: 'bitcoin', symbol: 'BTC', name: 'Bitcoin', image: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png', current_price: 95000, market_cap: 1800000000000, price_change_percentage_24h: 2.5, total_volume: 30000000000 },
         { id: 'ethereum', symbol: 'ETH', name: 'Ethereum', image: 'https://assets.coingecko.com/coins/images/279/large/ethereum.png', current_price: 3200, market_cap: 380000000000, price_change_percentage_24h: 1.8, total_volume: 15000000000 },
-        // Add more mock coins as needed
+        { id: 'tether', symbol: 'USDT', name: 'Tether', image: 'https://assets.coingecko.com/coins/images/325/large/Tether.png', current_price: 1.00, market_cap: 100000000000, price_change_percentage_24h: 0.0, total_volume: 50000000000 },
+        { id: 'binancecoin', symbol: 'BNB', name: 'BNB', image: 'https://assets.coingecko.com/coins/images/825/large/bnb-icon2_2x.png', current_price: 600, market_cap: 90000000000, price_change_percentage_24h: -1.2, total_volume: 2000000000 },
+        { id: 'solana', symbol: 'SOL', name: 'Solana', image: 'https://assets.coingecko.com/coins/images/4128/large/solana.png', current_price: 180, market_cap: 80000000000, price_change_percentage_24h: 3.5, total_volume: 3000000000 },
+        { id: 'cardano', symbol: 'ADA', name: 'Cardano', image: 'https://assets.coingecko.com/coins/images/975/large/cardano.png', current_price: 0.8, market_cap: 28000000000, price_change_percentage_24h: 1.0, total_volume: 1000000000 },
+        { id: 'ripple', symbol: 'XRP', name: 'XRP', image: 'https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png', current_price: 0.5, market_cap: 25000000000, price_change_percentage_24h: -0.5, total_volume: 800000000 },
+        { id: 'polkadot', symbol: 'DOT', name: 'Polkadot', image: 'https://assets.coingecko.com/coins/images/12171/large/polkadot.png', current_price: 6.5, market_cap: 8000000000, price_change_percentage_24h: 2.0, total_volume: 500000000 },
+        { id: 'chainlink', symbol: 'LINK', name: 'Chainlink', image: 'https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png', current_price: 15.0, market_cap: 8000000000, price_change_percentage_24h: 1.5, total_volume: 600000000 },
+        { id: 'litecoin', symbol: 'LTC', name: 'Litecoin', image: 'https://assets.coingecko.com/coins/images/2/large/litecoin.png', current_price: 80, market_cap: 6000000000, price_change_percentage_24h: 0.8, total_volume: 400000000 },
+        { id: 'bitcoin-cash', symbol: 'BCH', name: 'Bitcoin Cash', image: 'https://assets.coingecko.com/coins/images/780/large/bitcoin-cash-circle.png', current_price: 400, market_cap: 8000000000, price_change_percentage_24h: 1.2, total_volume: 300000000 },
+        { id: 'stellar', symbol: 'XLM', name: 'Stellar', image: 'https://assets.coingecko.com/coins/images/100/large/Stellar_symbol_black_RGB.png', current_price: 0.1, market_cap: 3000000000, price_change_percentage_24h: 0.5, total_volume: 100000000 },
+        { id: 'vechain', symbol: 'VET', name: 'VeChain', image: 'https://assets.coingecko.com/coins/images/1167/large/VeChain-Logo-768x725.png', current_price: 0.03, market_cap: 2000000000, price_change_percentage_24h: 2.5, total_volume: 50000000 },
+        { id: 'eos', symbol: 'EOS', name: 'EOS', image: 'https://assets.coingecko.com/coins/images/738/large/eos-eos-logo.png', current_price: 0.8, market_cap: 800000000, price_change_percentage_24h: -0.3, total_volume: 200000000 },
+        { id: 'tron', symbol: 'TRX', name: 'TRON', image: 'https://assets.coingecko.com/coins/images/1094/large/tron-logo.png', current_price: 0.15, market_cap: 13000000000, price_change_percentage_24h: 0.7, total_volume: 400000000 },
+        { id: 'bitshares', symbol: 'BTS', name: 'BitShares', image: 'https://assets.coingecko.com/coins/images/95/large/bitshares.png', current_price: 0.002, market_cap: 5000000, price_change_percentage_24h: 1.0, total_volume: 100000 },
       ];
       cachedCoins = mockCoins;
       lastFetchTime = now;
